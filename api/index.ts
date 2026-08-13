@@ -7,8 +7,21 @@ import { Redis } from "@upstash/redis";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
-import { QUESTIONS } from "../server/src/data/questionsData.js";
-import { evaluateSubmission, isValidClub } from "../server/src/lib/quizLogic.js";
+import { QUESTIONS } from "./data/questionsData.js";
+
+// ── Pure Logic Helpers ────────────────────────────────────────────────────────
+
+function isValidClub(club: string): boolean {
+  return club === "STACK_PUSH" || club === "IT_INNOVATORS";
+}
+
+function evaluateSubmission(answer: string, correctAnswer: string, points: number) {
+  const isCorrect = answer === correctAnswer;
+  return {
+    isCorrect,
+    pointsAwarded: isCorrect ? points : 0,
+  };
+}
 
 // ── Redis Instance ────────────────────────────────────────────────────────────
 
@@ -334,7 +347,7 @@ r.post("/questions/submit", async (req, res) => {
 
     const now = Date.now();
     const startedAt = state.questionStartedAt ? new Date(state.questionStartedAt).getTime() : now;
-    const { isCorrect, pointsAwarded } = evaluateSubmission(a as any, currentQ.correctAnswer, currentQ.points);
+    const { isCorrect, pointsAwarded } = evaluateSubmission(a, currentQ.correctAnswer, currentQ.points);
 
     const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs: Math.max(0, now - startedAt), submittedAt: new Date(now).toISOString() };
     await saveSubmission(sub);
