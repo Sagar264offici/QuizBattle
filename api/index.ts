@@ -1499,20 +1499,39 @@ async function setState(patch: Partial<QuizSessionState>): Promise<QuizSessionSt
 
 function parseHGetAll(res: any): any[] {
   if (!res) return [];
+  const list: any[] = [];
   if (Array.isArray(res)) {
-    const list: any[] = [];
-    for (let i = 1; i < res.length; i += 2) {
-      try {
-        const item = typeof res[i] === "string" ? JSON.parse(res[i]) : res[i];
-        if (item && item.name) list.push(item);
-      } catch (_) {}
+    for (let i = 0; i < res.length; i++) {
+      const val = res[i];
+      if (!val) continue;
+      if (typeof val === "object" && val.name) {
+        list.push(val);
+        continue;
+      }
+      if (typeof val === "string" && (val.startsWith("{") || val.startsWith("["))) {
+        try {
+          const item = JSON.parse(val);
+          if (item && item.name) list.push(item);
+        } catch (_) {}
+      }
     }
     return list;
   }
   if (typeof res === "object") {
-    return Object.values(res)
-      .map((v: any) => (typeof v === "string" ? JSON.parse(v) : v))
-      .filter((item: any) => item && item.name);
+    for (const val of Object.values(res)) {
+      if (!val) continue;
+      if (typeof val === "object" && (val as any).name) {
+        list.push(val);
+        continue;
+      }
+      if (typeof val === "string" && (val.startsWith("{") || val.startsWith("["))) {
+        try {
+          const item = JSON.parse(val);
+          if (item && item.name) list.push(item);
+        } catch (_) {}
+      }
+    }
+    return list;
   }
   return [];
 }
