@@ -156,7 +156,7 @@ export default function AdminPage() {
                 <input
                   type="password"
                   className="form-input"
-                  placeholder="Enter host password (default: MadeBySagar)"
+                  placeholder="Enter the password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoFocus

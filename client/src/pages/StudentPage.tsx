@@ -259,7 +259,7 @@ export default function StudentPage() {
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g. Sagar Sharma"
+                  placeholder="e.g. Sagar Pathak"
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
                   autoFocus
