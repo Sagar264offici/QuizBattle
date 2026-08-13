@@ -73,7 +73,11 @@ interface AdminSummary {
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const stored = sessionStorage.getItem("quizbattle-admin-pw");
-    return !!stored;
+    if (stored) {
+      setAdminPassword(stored);
+      return true;
+    }
+    return false;
   });
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");

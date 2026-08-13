@@ -1817,6 +1817,15 @@ r.get("/admin/summary", requireAdmin, async (_req, res) => {
     ).filter((p: any) => p && p.name);
   }
 
+  // Deduplicate participants
+  const seen = new Set<string | number>();
+  participants = participants.filter((p) => {
+    const key = p.sessionToken || p.id || p.name;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   const currentSubmissions: any[] = (
     await Promise.all(
       participants.map(async (p) => {
