@@ -1374,8 +1374,12 @@ function evaluateSubmission(answer: string, correctAnswer: string, points: numbe
 
 // ── Redis Native REST Client ───────────────────────────────────────────────
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || "https://casual-ray-186045.upstash.io";
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcDI3NmExNGJjOTA2YTU0MDk4YTc5OGUzMWYyMjI4N2U5Yg";
+const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || "https://casual-ray-186045.upstash.io")
+  .replace(/^["']|["']$/g, "")
+  .trim();
+const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcDI3NmExNGJjOTA2YTU0MDk4YTc5OGUzMWYyMjI4N2U5Yg")
+  .replace(/^["']|["']$/g, "")
+  .trim();
 
 async function redisCommand(cmd: (string | number)[]) {
   try {
@@ -1784,37 +1788,6 @@ r.post("/admin/reset-all-fresh", requireAdmin, async (_req, res) => {
     correctAnswer: null,
   });
   res.json({ ok: true, message: "All data cleared", state });
-});
-
-r.get("/debug-summary", async (_req, res) => {
-  let rawMap = null;
-  let fetchErr = null;
-  let rawJson = null;
-  try {
-    const response = await fetch(REDIS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${REDIS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(["HGETALL", "quiz:participantsMap"]),
-    });
-    rawJson = await response.json();
-    rawMap = rawJson.result;
-  } catch (e: any) {
-    fetchErr = e.message;
-  }
-
-  const participants = parseHGetAll(rawMap);
-  res.json({
-    REDIS_URL,
-    tokenPrefix: REDIS_TOKEN.slice(0, 10),
-    rawJson,
-    rawMap,
-    fetchErr,
-    participantsLength: participants.length,
-    participants,
-  });
 });
 
 r.post("/admin/end-quiz", requireAdmin, async (_req, res) => {
