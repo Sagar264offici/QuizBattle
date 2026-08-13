@@ -24,15 +24,41 @@ interface Question {
   correctAnswer?: string;
 }
 
+function loadCachedParticipant(): Participant | null {
+  try {
+    const raw = localStorage.getItem("quizbattle-participant");
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+
 export default function StudentPage() {
   const [sessionToken, setSessionToken] = useState<string>(() => {
     return localStorage.getItem("quizbattle-session") || "";
   });
-  const [participant, setParticipant] = useState<Participant | null>(null);
-  
+  // Hydrate participant from cache so user never sees join form on refresh
+  const [participant, setParticipantState] = useState<Participant | null>(() => {
+    const token = localStorage.getItem("quizbattle-session");
+    return token ? loadCachedParticipant() : null;
+  });
+  const [isSessionLoading, setIsSessionLoading] = useState<boolean>(() => {
+    // If we have a token but no cached participant, show loader instead of form
+    const token = localStorage.getItem("quizbattle-session");
+    return !!token && !loadCachedParticipant();
+  });
+
+  // Wrapper that also persists to localStorage
+  const setParticipant = (p: Participant | null) => {
+    setParticipantState(p);
+    if (p) {
+      localStorage.setItem("quizbattle-participant", JSON.stringify(p));
+    } else {
+      localStorage.removeItem("quizbattle-participant");
+    }
+  };
+
   // Registration form
   const [regName, setRegName] = useState("");
-  const [regClub, setRegClub] = useState<"STACK_PUSH" | "IT_INNOVATORS" | "">("");
+  const [regClub, setRegClub] = useState<"STACK_PUSH" | "IT_INNOVATORS" | "">("")
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState("");
 
@@ -58,8 +84,9 @@ export default function StudentPage() {
   const lastQuestionIdRef = useRef<number | null>(null);
 
   // Sync session and participant data
-  const syncSession = async () => {
-    if (!sessionToken) return;
+  const syncSession = async (token?: string) => {
+    const tok = token ?? sessionToken;
+    if (!tok) return;
     try {
       const data = await fetchJson<{
         participant: Participant;
@@ -69,10 +96,11 @@ export default function StudentPage() {
         countdownEndsAt: string | null;
         correctAnswer: string | null;
         userSubmission?: any;
-      }>(`/api/participants/session?token=${encodeURIComponent(sessionToken)}`);
+      }>(`/api/participants/session?token=${encodeURIComponent(tok)}`);
 
       if (data.participant) {
         setParticipant(data.participant);
+        setIsSessionLoading(false);
       }
       if (data.sessionStatus) {
         setStatus(data.sessionStatus);
@@ -92,7 +120,8 @@ export default function StudentPage() {
         setSelectedAnswer(data.userSubmission.answer);
       }
     } catch (_) {
-      // Keep local state on transient network/serverless polling glitch
+      // Keep local cached state on transient network/serverless polling glitch
+      setIsSessionLoading(false);
     }
   };
 
@@ -111,17 +140,19 @@ export default function StudentPage() {
 
   // Initial and regular polling (every 1 second for ultra-fast response for 50+ students)
   useEffect(() => {
-    syncSession();
-    syncLeaderboard();
+    if (sessionToken) {
+      syncSession(sessionToken);
+      syncLeaderboard();
+    }
 
     const interval = setInterval(() => {
-      syncSession();
+      if (sessionToken) syncSession(sessionToken);
       syncLeaderboard();
-    }, 1000);
+    }, 1500);
 
     // Socket events for instantaneous push when supported
     socket.on("quiz:state", () => {
-      syncSession();
+      if (sessionToken) syncSession(sessionToken);
       syncLeaderboard();
     });
     socket.on("leaderboard:update", () => {
@@ -237,7 +268,19 @@ export default function StudentPage() {
     }
   };
 
-  // --- 1. RENDER JOIN / REGISTRATION FORM ---
+  // --- 1. LOADING STATE (has token but participant not yet resolved) ---
+  if (isSessionLoading) {
+    return (
+      <div className="app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <div style={{ textAlign: "center", color: "var(--text-muted)" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "12px" }}>⏳</div>
+          <div>Connecting to quiz...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- 2. RENDER JOIN / REGISTRATION FORM ---
   if (!participant) {
     return (
       <div className="app-shell">
