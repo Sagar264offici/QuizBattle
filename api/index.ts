@@ -1787,10 +1787,31 @@ r.post("/admin/reset-all-fresh", requireAdmin, async (_req, res) => {
 });
 
 r.get("/debug-summary", async (_req, res) => {
-  const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
+  let rawMap = null;
+  let fetchErr = null;
+  let rawJson = null;
+  try {
+    const response = await fetch(REDIS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${REDIS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(["HGETALL", "quiz:participantsMap"]),
+    });
+    rawJson = await response.json();
+    rawMap = rawJson.result;
+  } catch (e: any) {
+    fetchErr = e.message;
+  }
+
   const participants = parseHGetAll(rawMap);
   res.json({
+    REDIS_URL,
+    tokenPrefix: REDIS_TOKEN.slice(0, 10),
+    rawJson,
     rawMap,
+    fetchErr,
     participantsLength: participants.length,
     participants,
   });
