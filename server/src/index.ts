@@ -3,6 +3,8 @@ import cors from "cors";
 import express from "express";
 import session from "express-session";
 import http from "http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import { config } from "./config.js";
 import { prisma } from "./database.js";
@@ -12,6 +14,11 @@ import {
     getCurrentSession,
     getOrCreateClub,
 } from "./services/sessionService.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "../..");
+const distDir = path.join(rootDir, "dist");
 
 const app = express();
 const server = http.createServer(app);
@@ -611,6 +618,12 @@ io.on("connection", (socket) => {
     const session = await getCurrentSession();
     socket.emit("quiz:state", session ?? { status: "WAITING" });
   });
+});
+
+app.use(express.static(distDir));
+
+app.get(/^(?!\/api).*/, (_req, res) => {
+  res.sendFile(path.join(distDir, "index.html"));
 });
 
 const port = config.port;
