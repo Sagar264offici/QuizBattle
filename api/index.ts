@@ -3,7 +3,6 @@
  * Uses @upstash/redis SDK for shared state across all serverless lambdas.
  */
 
-import { Redis } from "@upstash/redis";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
@@ -1373,12 +1372,42 @@ function evaluateSubmission(answer: string, correctAnswer: string, points: numbe
   };
 }
 
-// ── Redis Instance ────────────────────────────────────────────────────────────
+// ── Redis Native REST Client ───────────────────────────────────────────────
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL || "https://casual-ray-186045.upstash.io",
-  token: process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcDI3NmExNGJjOTA2YTU0MDk4YTc5OGUzMWYyMjI4N2U5Yg",
-});
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || "https://casual-ray-186045.upstash.io";
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcDI3NmExNGJjOTA2YTU0MDk4YTc5OGUzMWYyMjI4N2U5Yg";
+
+async function redisCommand(cmd: (string | number)[]) {
+  try {
+    const res = await fetch(REDIS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${REDIS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(cmd),
+    });
+    const data = (await res.json()) as { result?: any };
+    return data.result;
+  } catch (err) {
+    console.error("Redis error:", err);
+    return null;
+  }
+}
+
+const redis = {
+  get: <T = string>(key: string): Promise<T | null> => redisCommand(["GET", key]),
+  set: (key: string, val: string, opts?: { ex?: number }) => {
+    if (opts?.ex) {
+      return redisCommand(["SET", key, val, "EX", opts.ex]);
+    }
+    return redisCommand(["SET", key, val]);
+  },
+  incr: (key: string): Promise<number> => redisCommand(["INCR", key]),
+  incrby: (key: string, by: number): Promise<number> => redisCommand(["INCRBY", key, by]),
+  flushdb: () => redisCommand(["FLUSHDB"]),
+  ping: () => redisCommand(["PING"]),
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
