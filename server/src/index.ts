@@ -76,8 +76,11 @@ function requireAdmin(
   next();
 }
 
+// Router that works whether mounted on /api or /
+const apiRouter = express.Router();
+
 // --- Health ---
-app.get("/api/health", (_req, res) => {
+apiRouter.get("/health", (_req, res) => {
   res.json({
     ok: true,
     timestamp: new Date().toISOString(),
@@ -86,7 +89,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 // --- Admin Auth ---
-app.post("/api/admin/login", (req, res) => {
+apiRouter.post("/admin/login", (req, res) => {
   const { password } = req.body ?? {};
   if (
     !password ||
@@ -99,24 +102,24 @@ app.post("/api/admin/login", (req, res) => {
   res.json({ ok: true, message: "Logged in successfully" });
 });
 
-app.post("/api/admin/logout", (req, res) => {
+apiRouter.post("/admin/logout", (req, res) => {
   req.session.destroy(() => {
     res.json({ ok: true });
   });
 });
 
 // --- Admin Endpoints ---
-app.get("/api/admin/summary", requireAdmin, (_req, res) => {
+apiRouter.get("/admin/summary", requireAdmin, (_req, res) => {
   const summary = quizStore.getAdminSummary();
   res.json(summary);
 });
 
-app.get("/api/admin/questions", requireAdmin, (_req, res) => {
+apiRouter.get("/admin/questions", requireAdmin, (_req, res) => {
   res.json(quizStore.getAllQuestions());
 });
 
 // Start Question with 3-second Countdown Timer
-app.post("/api/admin/start-countdown", requireAdmin, (req, res) => {
+apiRouter.post("/admin/start-countdown", requireAdmin, (req, res) => {
   const { questionId, seconds } = req.body ?? {};
   const state = quizStore.startCountdown(
     questionId ? Number(questionId) : undefined,
@@ -126,7 +129,7 @@ app.post("/api/admin/start-countdown", requireAdmin, (req, res) => {
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/start-question", requireAdmin, (req, res) => {
+apiRouter.post("/admin/start-question", requireAdmin, (req, res) => {
   const { questionId, withCountdown } = req.body ?? {};
   let state;
   if (withCountdown !== false) {
@@ -143,20 +146,20 @@ app.post("/api/admin/start-question", requireAdmin, (req, res) => {
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/lock-answers", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/lock-answers", requireAdmin, (_req, res) => {
   const state = quizStore.lockAnswers();
   broadcast("quiz:state", state);
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/reveal-answer", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/reveal-answer", requireAdmin, (_req, res) => {
   const result = quizStore.revealAnswer();
   broadcast("quiz:state", result.state);
   broadcast("display:reveal", result);
   res.json({ ok: true, ...result });
 });
 
-app.post("/api/admin/next-question", requireAdmin, (req, res) => {
+apiRouter.post("/admin/next-question", requireAdmin, (req, res) => {
   const { questionNumber } = req.body ?? {};
   const state = quizStore.nextQuestion(
     questionNumber ? Number(questionNumber) : undefined,
@@ -165,13 +168,13 @@ app.post("/api/admin/next-question", requireAdmin, (req, res) => {
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/prev-question", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/prev-question", requireAdmin, (_req, res) => {
   const state = quizStore.prevQuestion();
   broadcast("quiz:state", state);
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/select-question", requireAdmin, (req, res) => {
+apiRouter.post("/admin/select-question", requireAdmin, (req, res) => {
   const { questionNumber } = req.body ?? {};
   if (!questionNumber) {
     return res.status(400).json({ error: "Question number is required" });
@@ -181,15 +184,14 @@ app.post("/api/admin/select-question", requireAdmin, (req, res) => {
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/reset-current-question", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/reset-current-question", requireAdmin, (_req, res) => {
   const state = quizStore.resetCurrentQuestion();
   broadcast("quiz:state", state);
   res.json({ ok: true, state });
 });
 
 // --- 1-CLICK RESET ACTIONS FOR TESTING WITH TEACHER ---
-// 1. Reset responses & scores, keeping registered students
-app.post("/api/admin/reset-scores", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/reset-scores", requireAdmin, (_req, res) => {
   const state = quizStore.resetScoresForTesting();
   broadcast("quiz:state", state);
   broadcast("leaderboard:update", { clubs: quizStore.clubScores });
@@ -200,8 +202,7 @@ app.post("/api/admin/reset-scores", requireAdmin, (_req, res) => {
   });
 });
 
-// 2. Complete Fresh Wipe: Clear everything back to Q1 WAITING
-app.post("/api/admin/reset-all-fresh", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/reset-all-fresh", requireAdmin, (_req, res) => {
   const state = quizStore.clearAllFresh();
   broadcast("quiz:state", state);
   broadcast("leaderboard:update", { clubs: quizStore.clubScores });
@@ -212,21 +213,20 @@ app.post("/api/admin/reset-all-fresh", requireAdmin, (_req, res) => {
   });
 });
 
-// Legacy reset route alias for compatibility
-app.post("/api/admin/reset-quiz", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/reset-quiz", requireAdmin, (_req, res) => {
   const state = quizStore.resetScoresForTesting();
   broadcast("quiz:state", state);
   res.json({ ok: true, state });
 });
 
-app.post("/api/admin/end-quiz", requireAdmin, (_req, res) => {
+apiRouter.post("/admin/end-quiz", requireAdmin, (_req, res) => {
   const state = quizStore.endQuiz();
   broadcast("quiz:state", state);
   res.json({ ok: true, state });
 });
 
 // --- Public & Student Endpoints ---
-app.get("/api/quiz-state", (_req, res) => {
+apiRouter.get("/quiz-state", (_req, res) => {
   const state = quizStore.getState();
   res.json({
     session: state,
@@ -234,7 +234,7 @@ app.get("/api/quiz-state", (_req, res) => {
   });
 });
 
-app.get("/api/leaderboard", (_req, res) => {
+apiRouter.get("/leaderboard", (_req, res) => {
   res.json({
     clubs: [
       { name: "STACK_PUSH", score: quizStore.clubScores.STACK_PUSH },
@@ -243,7 +243,7 @@ app.get("/api/leaderboard", (_req, res) => {
   });
 });
 
-app.post("/api/participants/register", (req, res) => {
+apiRouter.post("/participants/register", (req, res) => {
   try {
     const { name, club } = req.body ?? {};
     const participant = quizStore.registerParticipant(String(name || ""), String(club || ""));
@@ -263,7 +263,7 @@ app.post("/api/participants/register", (req, res) => {
   }
 });
 
-app.get("/api/participants/session", (req, res) => {
+apiRouter.get("/participants/session", (req, res) => {
   const token = String(req.query.token ?? "");
   if (!token) {
     return res.status(400).json({ error: "Missing session token" });
@@ -297,7 +297,7 @@ app.get("/api/participants/session", (req, res) => {
   });
 });
 
-app.post("/api/questions/submit", (req, res) => {
+apiRouter.post("/questions/submit", (req, res) => {
   try {
     const { token, answer, questionId } = req.body ?? {};
     const result = quizStore.submitAnswer(
@@ -329,6 +329,10 @@ app.post("/api/questions/submit", (req, res) => {
     res.status(400).json({ error: err.message || "Submission failed" });
   }
 });
+
+// Dual-mount router on both /api and / so it never 404s on Vercel path rewrites
+app.use("/api", apiRouter);
+app.use("/", apiRouter);
 
 // Socket.io handlers
 if (io) {

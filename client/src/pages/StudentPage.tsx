@@ -302,6 +302,23 @@ export default function StudentPage() {
               >
                 {regLoading ? "Joining..." : "ENTER LIVE QUIZ →"}
               </button>
+
+              <div style={{ marginTop: "20px", textAlign: "center", paddingTop: "14px", borderTop: "1px solid var(--border-subtle)" }}>
+                <a
+                  href="/host"
+                  style={{
+                    color: "var(--text-dim)",
+                    fontSize: "0.85rem",
+                    textDecoration: "none",
+                    fontWeight: 600,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  ⚙️ Host / Teacher Dashboard Login →
+                </a>
+              </div>
             </form>
           </div>
         </div>
