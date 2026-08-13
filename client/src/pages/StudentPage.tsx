@@ -71,8 +71,12 @@ export default function StudentPage() {
         userSubmission?: any;
       }>(`/api/participants/session?token=${encodeURIComponent(sessionToken)}`);
 
-      setParticipant(data.participant);
-      setStatus(data.sessionStatus);
+      if (data.participant) {
+        setParticipant(data.participant);
+      }
+      if (data.sessionStatus) {
+        setStatus(data.sessionStatus);
+      }
       setCountdownEndsAt(data.countdownEndsAt);
       setCorrectAnswer(data.correctAnswer);
 
@@ -87,12 +91,8 @@ export default function StudentPage() {
       if (data.userSubmission) {
         setSelectedAnswer(data.userSubmission.answer);
       }
-    } catch (err: any) {
-      if (err.message === "Participant not found") {
-        localStorage.removeItem("quizbattle-session");
-        setSessionToken("");
-        setParticipant(null);
-      }
+    } catch (_) {
+      // Keep local state on transient network/serverless polling glitch
     }
   };
 

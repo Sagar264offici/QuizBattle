@@ -1,4 +1,6 @@
-import crypto from "crypto";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { QuestionItem, QUESTIONS, ROUNDS } from "../data/questionsData.js";
 import { evaluateSubmission, isValidClub } from "../lib/quizLogic.js";
 
@@ -45,12 +47,58 @@ export interface QuizState {
   updatedAt: string;
 }
 
+interface PersistedData {
+  state: {
+    status: QuizStatus;
+    currentQuestionId: number | null;
+    questionStartedAt: string | null;
+    countdownEndsAt: string | null;
+    correctAnswer: string | null;
+    updatedAt: string;
+  };
+  clubScores: {
+    STACK_PUSH: number;
+    IT_INNOVATORS: number;
+  };
+  participants: Participant[];
+  submissions: Submission[];
+  version: number;
+}
+
+const STORAGE_FILE = path.join(os.tmpdir(), "quizbattle_store.json");
+
+export function encodeSessionToken(p: { id: number; name: string; club: string }): string {
+  const payload = JSON.stringify({
+    id: p.id,
+    name: p.name,
+    club: p.club,
+    t: Date.now(),
+  });
+  return Buffer.from(payload).toString("base64url");
+}
+
+export function decodeSessionToken(token: string): { id: number; name: string; club: "STACK_PUSH" | "IT_INNOVATORS" } | null {
+  try {
+    const json = Buffer.from(token, "base64url").toString("utf8");
+    const data = JSON.parse(json);
+    if (data && data.name && (data.club === "STACK_PUSH" || data.club === "IT_INNOVATORS")) {
+      return {
+        id: Number(data.id) || 1,
+        name: String(data.name).trim(),
+        club: data.club,
+      };
+    }
+  } catch (_) {}
+  return null;
+}
+
 class QuizStore {
   private participantsByToken = new Map<string, Participant>();
   private participantsById = new Map<number, Participant>();
   private submissions = new Map<string, Submission>(); // key: `${participantId}:${questionId}`
   private nextParticipantId = 1;
   private nextSubmissionId = 1;
+  private lastLoadedMtime = 0;
 
   public clubScores = {
     STACK_PUSH: 0,
@@ -73,6 +121,65 @@ class QuizStore {
     for (const q of QUESTIONS) {
       this.questionsByNumber.set(q.questionNumber, q);
     }
+    this.loadFromDisk();
+  }
+
+  // --- Disk Persistence (Shared across Vercel Lambdas) ---
+  private saveToDisk() {
+    try {
+      const data: PersistedData = {
+        state: {
+          status: this.state.status,
+          currentQuestionId: this.state.currentQuestionId,
+          questionStartedAt: this.state.questionStartedAt,
+          countdownEndsAt: this.state.countdownEndsAt,
+          correctAnswer: this.state.correctAnswer,
+          updatedAt: this.state.updatedAt,
+        },
+        clubScores: this.clubScores,
+        participants: Array.from(this.participantsById.values()),
+        submissions: Array.from(this.submissions.values()),
+        version: Date.now(),
+      };
+      fs.writeFileSync(STORAGE_FILE, JSON.stringify(data), "utf8");
+    } catch (_) {}
+  }
+
+  private loadFromDisk() {
+    try {
+      if (!fs.existsSync(STORAGE_FILE)) return;
+      const stat = fs.statSync(STORAGE_FILE);
+      if (stat.mtimeMs <= this.lastLoadedMtime) return;
+
+      this.lastLoadedMtime = stat.mtimeMs;
+      const raw = fs.readFileSync(STORAGE_FILE, "utf8");
+      const data: PersistedData = JSON.parse(raw);
+
+      if (data && data.state) {
+        this.state = {
+          ...data.state,
+          currentQuestion: data.state.currentQuestionId
+            ? this.getQuestion(data.state.currentQuestionId)
+            : null,
+        };
+        this.clubScores = data.clubScores || { STACK_PUSH: 0, IT_INNOVATORS: 0 };
+
+        if (Array.isArray(data.participants)) {
+          for (const p of data.participants) {
+            this.participantsById.set(p.id, p);
+            if (p.sessionToken) this.participantsByToken.set(p.sessionToken, p);
+            if (p.id >= this.nextParticipantId) this.nextParticipantId = p.id + 1;
+          }
+        }
+
+        if (Array.isArray(data.submissions)) {
+          for (const s of data.submissions) {
+            this.submissions.set(`${s.participantId}:${s.questionId}`, s);
+            if (s.id >= this.nextSubmissionId) this.nextSubmissionId = s.id + 1;
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   // --- Questions ---
@@ -90,6 +197,8 @@ class QuizStore {
 
   // --- State & Session ---
   public getState(): QuizState {
+    this.loadFromDisk();
+
     // If status is COUNTDOWN and time has passed, transition to LIVE automatically
     if (this.state.status === "COUNTDOWN" && this.state.countdownEndsAt) {
       const remaining = new Date(this.state.countdownEndsAt).getTime() - Date.now();
@@ -98,6 +207,7 @@ class QuizStore {
         this.state.questionStartedAt = new Date().toISOString();
         this.state.countdownEndsAt = null;
         this.state.updatedAt = new Date().toISOString();
+        this.saveToDisk();
       }
     }
 
@@ -111,17 +221,19 @@ class QuizStore {
 
   // --- Participant Registration ---
   public registerParticipant(name: string, club: string): Participant {
+    this.loadFromDisk();
     const trimmedName = name.trim();
     if (!trimmedName) throw new Error("Name is required");
     if (!isValidClub(club)) throw new Error("Valid club is required");
 
-    const token = crypto.randomBytes(20).toString("hex");
     const id = this.nextParticipantId++;
+    const safeClub = club as "STACK_PUSH" | "IT_INNOVATORS";
+    const token = encodeSessionToken({ id, name: trimmedName, club: safeClub });
 
     const participant: Participant = {
       id,
       name: trimmedName,
-      club: club as "STACK_PUSH" | "IT_INNOVATORS",
+      club: safeClub,
       sessionToken: token,
       score: 0,
       correctCount: 0,
@@ -131,23 +243,55 @@ class QuizStore {
 
     this.participantsByToken.set(token, participant);
     this.participantsById.set(id, participant);
+    this.saveToDisk();
     return participant;
   }
 
   public getParticipantByToken(token: string): Participant | null {
     if (!token) return null;
-    return this.participantsByToken.get(token) ?? null;
+    this.loadFromDisk();
+
+    // Check in-memory map
+    let p = this.participantsByToken.get(token);
+    if (p) return p;
+
+    // If not in map (e.g. fresh lambda), decode stateless token and restore
+    const decoded = decodeSessionToken(token);
+    if (decoded) {
+      // Check if participant id exists
+      p = this.participantsById.get(decoded.id);
+      if (!p) {
+        p = {
+          id: decoded.id,
+          name: decoded.name,
+          club: decoded.club,
+          sessionToken: token,
+          score: 0,
+          correctCount: 0,
+          attemptCount: 0,
+          joinedAt: new Date().toISOString(),
+        };
+        this.participantsById.set(p.id, p);
+      }
+      this.participantsByToken.set(token, p);
+      this.saveToDisk();
+      return p;
+    }
+
+    return null;
   }
 
   public getAllParticipants(): Participant[] {
+    this.loadFromDisk();
     return Array.from(this.participantsById.values());
   }
 
-  // --- Submission Handling (Sub-millisecond processing) ---
+  // --- Submission Handling ---
   public submitAnswer(token: string, questionId: number, answer: string): {
     submission: Submission;
     participant: Participant;
   } {
+    this.loadFromDisk();
     const participant = this.getParticipantByToken(token);
     if (!participant) throw new Error("Participant not found");
 
@@ -206,15 +350,18 @@ class QuizStore {
 
     // Update club scores
     this.recalculateClubScores();
+    this.saveToDisk();
 
     return { submission, participant };
   }
 
   public getSubmission(participantId: number, questionId: number): Submission | null {
+    this.loadFromDisk();
     return this.submissions.get(`${participantId}:${questionId}`) ?? null;
   }
 
   public getSubmissionsForQuestion(questionId: number): Submission[] {
+    this.loadFromDisk();
     const list: Submission[] = [];
     for (const sub of this.submissions.values()) {
       if (sub.questionId === questionId) {
@@ -237,6 +384,7 @@ class QuizStore {
 
   // --- Host Actions ---
   public startCountdown(questionId?: number, seconds: number = 3) {
+    this.loadFromDisk();
     const targetQId = questionId ?? this.state.currentQuestionId ?? 1;
     const q = this.getQuestion(targetQId) ?? QUESTIONS[0];
 
@@ -250,10 +398,12 @@ class QuizStore {
       correctAnswer: null,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
   public startQuestionDirect(questionId?: number) {
+    this.loadFromDisk();
     const targetQId = questionId ?? this.state.currentQuestionId ?? 1;
     const q = this.getQuestion(targetQId) ?? QUESTIONS[0];
 
@@ -266,20 +416,25 @@ class QuizStore {
       correctAnswer: null,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
   public lockAnswers() {
+    this.loadFromDisk();
     this.state.status = "LOCKED";
     this.state.updatedAt = new Date().toISOString();
+    this.saveToDisk();
     return this.getState();
   }
 
   public revealAnswer() {
+    this.loadFromDisk();
     const q = this.getQuestion(this.state.currentQuestionId ?? 0);
     this.state.status = "REVEALED";
     this.state.correctAnswer = q ? q.correctAnswer : null;
     this.state.updatedAt = new Date().toISOString();
+    this.saveToDisk();
     return {
       state: this.getState(),
       correctAnswer: this.state.correctAnswer,
@@ -288,6 +443,7 @@ class QuizStore {
   }
 
   public nextQuestion(targetNumber?: number) {
+    this.loadFromDisk();
     const currentNum = this.state.currentQuestionId ?? 0;
     const nextNum = targetNumber ?? currentNum + 1;
     const targetQ = this.getQuestion(nextNum) ?? this.getQuestion(1) ?? QUESTIONS[0];
@@ -301,10 +457,12 @@ class QuizStore {
       correctAnswer: null,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
   public prevQuestion() {
+    this.loadFromDisk();
     const currentNum = this.state.currentQuestionId ?? 1;
     const prevNum = Math.max(1, currentNum - 1);
     const targetQ = this.getQuestion(prevNum) ?? QUESTIONS[0];
@@ -318,10 +476,12 @@ class QuizStore {
       correctAnswer: null,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
   public selectQuestion(questionNumber: number) {
+    this.loadFromDisk();
     const targetQ = this.getQuestion(questionNumber) ?? QUESTIONS[0];
     this.state = {
       ...this.state,
@@ -329,15 +489,15 @@ class QuizStore {
       currentQuestion: targetQ,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
   public resetCurrentQuestion() {
+    this.loadFromDisk();
     const qId = this.state.currentQuestionId ?? 1;
-    // Remove submissions for this question
     for (const [key, sub] of this.submissions.entries()) {
       if (sub.questionId === qId) {
-        // adjust participant score
         const p = this.participantsById.get(sub.participantId);
         if (p) {
           p.score = Math.max(0, p.score - sub.pointsAwarded);
@@ -354,15 +514,13 @@ class QuizStore {
     this.state.countdownEndsAt = null;
     this.state.correctAnswer = null;
     this.state.updatedAt = new Date().toISOString();
+    this.saveToDisk();
     return this.getState();
   }
 
   // --- 1-CLICK RESET METHODS FOR TEACHER TESTING ---
-  /**
-   * Clears all submissions and resets participant & club scores to 0.
-   * Keeps registered students in the lobby so they don't have to re-enter names!
-   */
   public resetScoresForTesting() {
+    this.loadFromDisk();
     this.submissions.clear();
     for (const p of this.participantsById.values()) {
       p.score = 0;
@@ -382,12 +540,10 @@ class QuizStore {
       correctAnswer: null,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
-  /**
-   * Complete fresh wipe: Clears all participants, submissions, scores, and resets back to Question 1 WAITING.
-   */
   public clearAllFresh() {
     this.participantsByToken.clear();
     this.participantsById.clear();
@@ -407,17 +563,21 @@ class QuizStore {
       correctAnswer: null,
       updatedAt: new Date().toISOString(),
     };
+    this.saveToDisk();
     return this.getState();
   }
 
   public endQuiz() {
+    this.loadFromDisk();
     this.state.status = "FINISHED";
     this.state.updatedAt = new Date().toISOString();
+    this.saveToDisk();
     return this.getState();
   }
 
   // --- Admin Summary ---
   public getAdminSummary() {
+    this.loadFromDisk();
     const participants = this.getAllParticipants();
     const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
     const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
