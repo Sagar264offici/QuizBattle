@@ -366,10 +366,23 @@ if (io) {
   });
 }
 
-// Serve Vite frontend when running standalone
-app.use(express.static(distDir));
-app.get(/^(?!\/api).*/, (_req, res) => {
-  res.sendFile(path.join(distDir, "index.html"));
+// Serve Vite frontend when running standalone locally (not in serverless environment)
+if (!process.env.VERCEL) {
+  app.use(express.static(distDir));
+  app.get(/^(?!\/api).*/, (_req, res) => {
+    res.sendFile(path.join(distDir, "index.html"));
+  });
+} else {
+  // On Vercel serverless, return JSON 404 for unknown endpoints
+  app.use((_req, res) => {
+    res.status(404).json({ error: "Endpoint not found" });
+  });
+}
+
+// Global error handler so exceptions return JSON instead of crashing
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("API error:", err);
+  res.status(500).json({ error: err.message || "Internal server error" });
 });
 
 // Start local server if not running as a Vercel serverless function or in test mode
