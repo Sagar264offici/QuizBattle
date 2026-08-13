@@ -24,6 +24,28 @@ interface Question {
   correctAnswer?: string;
 }
 
+interface CachedAnswer {
+  questionId: number;
+  answer: string;
+  submitted: boolean;
+}
+
+const ANSWER_CACHE_KEY = "quizbattle-current-answer";
+
+function loadCachedAnswer(): CachedAnswer | null {
+  try {
+    const raw = localStorage.getItem(ANSWER_CACHE_KEY);
+    return raw ? JSON.parse(raw) as CachedAnswer : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveCachedAnswer(answer: CachedAnswer | null) {
+  if (answer) localStorage.setItem(ANSWER_CACHE_KEY, JSON.stringify(answer));
+  else localStorage.removeItem(ANSWER_CACHE_KEY);
+}
+
 function loadCachedParticipant(): Participant | null {
   try {
     const raw = localStorage.getItem("quizbattle-participant");
@@ -48,7 +70,17 @@ export default function StudentPage() {
 
   // Wrapper that also persists to localStorage
   const setParticipant = (p: Participant | null) => {
-    setParticipantState(p);
+    setParticipantState((current) => {
+      if (
+        current && p &&
+        current.id === p.id &&
+        current.name === p.name &&
+        current.club === p.club &&
+        current.score === p.score &&
+        current.sessionToken === p.sessionToken
+      ) return current;
+      return p;
+    });
     if (p) {
       localStorage.setItem("quizbattle-participant", JSON.stringify(p));
     } else {
@@ -82,11 +114,16 @@ export default function StudentPage() {
   });
 
   const lastQuestionIdRef = useRef<number | null>(null);
+  const sessionRequestRef = useRef(0);
+  const sessionRequestInFlightRef = useRef(false);
+  const leaderboardRequestRef = useRef(0);
 
   // Sync session and participant data
-  const syncSession = async (token?: string) => {
+  const syncSession = async (token?: string, force = false) => {
     const tok = token ?? sessionToken;
-    if (!tok) return;
+    if (!tok || (sessionRequestInFlightRef.current && !force)) return;
+    const requestId = ++sessionRequestRef.current;
+    sessionRequestInFlightRef.current = true;
     try {
       const data = await fetchJson<{
         participant: Participant;
@@ -96,7 +133,11 @@ export default function StudentPage() {
         countdownEndsAt: string | null;
         correctAnswer: string | null;
         userSubmission?: any;
+        clubs?: Array<{ name: string; score: number }>;
       }>(`/api/participants/session?token=${encodeURIComponent(tok)}`);
+
+      // A late response from an older poll must never overwrite a newer state.
+      if (requestId !== sessionRequestRef.current) return;
 
       if (data.participant) {
         setParticipant(data.participant);
@@ -109,36 +150,71 @@ export default function StudentPage() {
       setCorrectAnswer(data.correctAnswer);
 
       // Check if question changed
-      if (data.currentQuestion?.id !== lastQuestionIdRef.current) {
-        lastQuestionIdRef.current = data.currentQuestion?.id ?? null;
-        setSelectedAnswer(null);
+      if (data.currentQuestion && data.currentQuestion.id !== lastQuestionIdRef.current) {
+        lastQuestionIdRef.current = data.currentQuestion.id;
+        const cached = loadCachedAnswer();
+        setSelectedAnswer(cached?.questionId === data.currentQuestion.id ? cached.answer : null);
       }
 
-      setQuestion(data.currentQuestion);
-      setHasSubmitted(data.hasSubmitted);
-      if (data.userSubmission) {
+      setQuestion((current) => current?.id === data.currentQuestion?.id ? current : data.currentQuestion);
+      const cachedAnswer = loadCachedAnswer();
+      const answerForCurrentQuestion = data.currentQuestion && cachedAnswer?.questionId === data.currentQuestion.id
+        ? cachedAnswer
+        : null;
+      // A successful API response is authoritative. This also lets a host reset
+      // a question; failed polls never reach this branch and keep local state.
+      setHasSubmitted(Boolean(data.hasSubmitted));
+      if (data.userSubmission?.answer) {
         setSelectedAnswer(data.userSubmission.answer);
+        if (data.currentQuestion) {
+          saveCachedAnswer({ questionId: data.currentQuestion.id, answer: data.userSubmission.answer, submitted: true });
+        }
+      } else if (answerForCurrentQuestion) {
+        setSelectedAnswer(answerForCurrentQuestion.answer);
+        if (answerForCurrentQuestion.submitted) {
+          saveCachedAnswer({ ...answerForCurrentQuestion, submitted: false });
+        }
+      }
+      if (data.clubs) {
+        const nextScores = {
+          STACK_PUSH: data.clubs.find((club) => club.name === "STACK_PUSH")?.score ?? 0,
+          IT_INNOVATORS: data.clubs.find((club) => club.name === "IT_INNOVATORS")?.score ?? 0,
+        };
+        setClubScores((current) =>
+          current.STACK_PUSH === nextScores.STACK_PUSH && current.IT_INNOVATORS === nextScores.IT_INNOVATORS
+            ? current
+            : nextScores,
+        );
       }
     } catch (_) {
       // Keep local cached state on transient network/serverless polling glitch
-      setIsSessionLoading(false);
+      if (requestId === sessionRequestRef.current) setIsSessionLoading(false);
+    } finally {
+      if (requestId === sessionRequestRef.current) sessionRequestInFlightRef.current = false;
     }
   };
 
   // Sync leaderboard scores
   const syncLeaderboard = async () => {
+    const requestId = ++leaderboardRequestRef.current;
     try {
       const data = await fetchJson<{ clubs: Array<{ name: string; score: number }> }>("/api/leaderboard");
+      if (requestId !== leaderboardRequestRef.current) return;
       if (data.clubs) {
-        setClubScores({
+        const nextScores = {
           STACK_PUSH: data.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
           IT_INNOVATORS: data.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
-        });
+        };
+        setClubScores((current) =>
+          current.STACK_PUSH === nextScores.STACK_PUSH && current.IT_INNOVATORS === nextScores.IT_INNOVATORS
+            ? current
+            : nextScores,
+        );
       }
     } catch (_) {}
   };
 
-  // Initial and regular polling (every 1 second for ultra-fast response for 50+ students)
+  // Session responses include club scores, so each student makes only one poll.
   useEffect(() => {
     if (sessionToken) {
       syncSession(sessionToken);
@@ -147,8 +223,7 @@ export default function StudentPage() {
 
     const interval = setInterval(() => {
       if (sessionToken) syncSession(sessionToken);
-      syncLeaderboard();
-    }, 1500);
+    }, 2000);
 
     // Socket events for instantaneous push when supported
     socket.on("quiz:state", () => {
@@ -220,6 +295,7 @@ export default function StudentPage() {
       localStorage.setItem("quizbattle-session", res.participant.sessionToken);
       setSessionToken(res.participant.sessionToken);
       setParticipant(res.participant);
+      syncSession(res.participant.sessionToken, true);
     } catch (err: any) {
       setRegError(err.message || "Registration failed");
     } finally {
@@ -249,12 +325,18 @@ export default function StudentPage() {
       });
 
       setHasSubmitted(true);
+      saveCachedAnswer({ questionId: question.id, answer: selectedAnswer, submitted: true });
+      // Invalidate a poll that started before this answer was accepted.
+      sessionRequestRef.current += 1;
       if (participant && res.participantScore !== undefined) {
         setParticipant({ ...participant, score: res.participantScore });
       }
       syncLeaderboard();
+      syncSession(sessionToken, true);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to submit answer");
+      // A request can reach the server even if the response was interrupted.
+      syncSession(sessionToken, true);
     } finally {
       setSubmitting(false);
     }
@@ -263,6 +345,7 @@ export default function StudentPage() {
   const handleLogout = () => {
     if (confirm("Are you sure you want to exit or switch your student profile?")) {
       localStorage.removeItem("quizbattle-session");
+      saveCachedAnswer(null);
       setSessionToken("");
       setParticipant(null);
     }
@@ -489,6 +572,8 @@ export default function StudentPage() {
                       onClick={() => {
                         if (status === "LIVE" && !hasSubmitted) {
                           setSelectedAnswer(key);
+                          saveCachedAnswer({ questionId: question.id, answer: key, submitted: false });
+                          setErrorMessage("");
                         }
                       }}
                       disabled={status !== "LIVE" || hasSubmitted}

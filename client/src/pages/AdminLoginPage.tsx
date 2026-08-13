@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchJson } from "../services/api";
+import { fetchJson, setAdminPassword } from "../services/api";
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
@@ -12,12 +12,15 @@ export default function AdminLoginPage() {
     setError("");
 
     try {
+      setAdminPassword(password);
       await fetchJson("/api/admin/login", {
         method: "POST",
         body: JSON.stringify({ password }),
       });
+      sessionStorage.setItem("quizbattle-admin-pw", password);
       navigate("/admin");
     } catch (err) {
+      setAdminPassword("");
       setError(err instanceof Error ? err.message : "Invalid admin password");
     }
   };

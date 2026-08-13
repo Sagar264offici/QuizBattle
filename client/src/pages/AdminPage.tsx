@@ -1,6 +1,5 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { fetchJson } from "../services/api";
-import { socket } from "../socket";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { fetchJson, setAdminPassword, getAdminPassword, clearAdminPassword } from "../services/api";
 
 interface Question {
   id: number;
@@ -16,35 +15,52 @@ interface Question {
   correctAnswer: string;
 }
 
-interface Submission {
-  id: number;
-  participantId: number;
-  participantName: string;
-  club: "STACK_PUSH" | "IT_INNOVATORS";
-  questionId: number;
-  questionNumber: number;
-  answer: string;
-  isCorrect: boolean;
-  pointsAwarded: number;
-  responseTimeMs: number;
-  submittedAt: string;
+interface ClubScore {
+  name: string;
+  score: number;
+}
+
+interface QuizSession {
+  status: string;
+  currentQuestionId: number;
+  currentQuestion: Question | null;
+  questionStartedAt: string | null;
+  countdownEndsAt: string | null;
+  correctAnswer: string | null;
+}
+
+interface AdminSummary {
+  session: QuizSession;
+  currentQuestionId: number;
+  clubs: ClubScore[];
 }
 
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem("quizbattle-admin-auth") === "true";
+    const stored = sessionStorage.getItem("quizbattle-admin-pw");
+    return !!stored;
   });
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Dashboard Data
-  const [summary, setSummary] = useState<any>({});
+  // Stable refs — we update these without causing re-renders on every poll
+  const summaryRef = useRef<AdminSummary | null>(null);
+  const questionsRef = useRef<Question[]>([]);
+
+  // Only these cause re-renders (the minimal set needed for display)
+  const [status, setStatus] = useState("WAITING");
+  const [currentQNum, setCurrentQNum] = useState(1);
+  const [clubs, setClubs] = useState<ClubScore[]>([
+    { name: "STACK_PUSH", score: 0 },
+    { name: "IT_INNOVATORS", score: 0 },
+  ]);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [selectedQuestionNumber, setSelectedQuestionNumber] = useState<number>(1);
-  const [roundFilter, setRoundFilter] = useState<string>("all");
+  const [selectedQuestionNumber, setSelectedQuestionNumber] = useState(1);
+  const [roundFilter, setRoundFilter] = useState("all");
   const [actionLoading, setActionLoading] = useState(false);
-  const [notification, setNotification] = useState<string>("");
+  const [notification, setNotification] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(0);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -55,52 +71,61 @@ export default function AdminPage() {
     e.preventDefault();
     setAuthError("");
     setAuthLoading(true);
-
     try {
-      await fetchJson("/api/admin/login", {
+      setAdminPassword(password);
+      const res = await fetchJson<{ ok: boolean; token?: string }>("/api/admin/login", {
         method: "POST",
         body: JSON.stringify({ password }),
       });
-      sessionStorage.setItem("quizbattle-admin-auth", "true");
-      setIsAuthenticated(true);
+      if (res.ok) {
+        sessionStorage.setItem("quizbattle-admin-pw", password);
+        setIsAuthenticated(true);
+      }
     } catch (err: any) {
+      clearAdminPassword();
       setAuthError(err.message || "Invalid admin password");
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const refreshData = async () => {
+  const refreshData = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const [sumData, qData] = await Promise.all([
-        fetchJson<any>("/api/admin/summary"),
-        fetchJson<Question[]>("/api/admin/questions"),
-      ]);
-      setSummary(sumData);
-      setQuestions(qData);
-    } catch (err) {
-      console.error("Admin refresh error:", err);
-    }
-  };
+      const sumData = await fetchJson<AdminSummary>("/api/admin/summary");
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      refreshData();
-      const interval = setInterval(refreshData, 1500);
+      // Smart diffing: only trigger re-renders if something actually changed
+      const prev = summaryRef.current;
+      const statusChanged = !prev || prev.session?.status !== sumData.session?.status;
+      const qChanged = !prev || prev.session?.currentQuestionId !== sumData.session?.currentQuestionId;
+      const clubsChanged = !prev || JSON.stringify(prev.clubs) !== JSON.stringify(sumData.clubs);
 
-      socket.on("participant:joined", refreshData);
-      socket.on("participant:submitted", refreshData);
-      socket.on("quiz:state", refreshData);
+      summaryRef.current = sumData;
 
-      return () => {
-        clearInterval(interval);
-        socket.off("participant:joined");
-        socket.off("participant:submitted");
-        socket.off("quiz:state");
-      };
+      if (statusChanged) setStatus(sumData.session?.status || "WAITING");
+      if (qChanged) setCurrentQNum(sumData.session?.currentQuestionId || 1);
+      if (clubsChanged) setClubs(sumData.clubs || []);
+      if (statusChanged || qChanged || clubsChanged) setLastUpdated(Date.now());
+    } catch (_) {
+      // Silently ignore poll errors to prevent blinking
     }
   }, [isAuthenticated]);
+
+  // Load questions once on mount (they never change)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetchJson<Question[]>("/api/admin/questions").then(q => {
+      questionsRef.current = q;
+      setQuestions(q);
+    }).catch(() => {});
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    refreshData();
+    const interval = setInterval(refreshData, 2000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, refreshData]);
 
   const runHostAction = async (endpoint: string, payload?: any, successMsg?: string) => {
     setActionLoading(true);
@@ -119,22 +144,23 @@ export default function AdminPage() {
   };
 
   const copyStudentLink = () => {
-    const url = `${window.location.origin}/student`;
-    navigator.clipboard.writeText(url);
-    showNotification("📋 Student link copied to clipboard!");
+    navigator.clipboard.writeText(`${window.location.origin}/student`);
+    showNotification("📋 Student link copied!");
   };
 
-  // Selected Question object
+  // Derived from stable ref + render-triggering state
   const activeQuestion = useMemo(() => {
-    const currentQId = summary.currentQuestionId ?? 1;
-    return questions.find((q) => q.questionNumber === currentQId) || questions[0];
-  }, [summary.currentQuestionId, questions]);
+    return questions.find(q => q.questionNumber === currentQNum) || questions[0] || null;
+  }, [questions, currentQNum]);
 
   const previewQuestion = useMemo(() => {
-    return questions.find((q) => q.questionNumber === selectedQuestionNumber) || activeQuestion;
+    return questions.find(q => q.questionNumber === selectedQuestionNumber) || activeQuestion;
   }, [questions, selectedQuestionNumber, activeQuestion]);
 
-  // --- 1. RENDER ADMIN LOGIN ---
+  const stackScore = clubs.find(c => c.name === "STACK_PUSH")?.score ?? 0;
+  const innovScore = clubs.find(c => c.name === "IT_INNOVATORS")?.score ?? 0;
+
+  // --- LOGIN FORM ---
   if (!isAuthenticated) {
     return (
       <div className="app-shell">
@@ -158,7 +184,7 @@ export default function AdminPage() {
                   className="form-input"
                   placeholder="Enter the password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={e => setPassword(e.target.value)}
                   autoFocus
                 />
               </div>
@@ -183,57 +209,40 @@ export default function AdminPage() {
     );
   }
 
-  // --- 2. RENDER ADMIN DASHBOARD ---
-  const currentStatus = summary.session?.status || "WAITING";
-  const submissions: Submission[] = summary.currentSubmissions || [];
-
+  // --- ADMIN DASHBOARD ---
   return (
     <div className="app-shell">
       <div className="container">
         {/* Notification Toast */}
         {notification && (
-          <div
-            style={{
-              position: "fixed",
-              top: "20px",
-              right: "20px",
-              background: "#10b981",
-              color: "#030712",
-              padding: "12px 20px",
-              borderRadius: "10px",
-              fontWeight: 800,
-              boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-              zIndex: 200,
-              animation: "fadeIn 0.2s ease-out",
-            }}
-          >
+          <div style={{
+            position: "fixed", top: "20px", right: "20px",
+            background: "#10b981", color: "#030712",
+            padding: "12px 20px", borderRadius: "10px", fontWeight: 800,
+            boxShadow: "0 10px 25px rgba(0,0,0,0.5)", zIndex: 200,
+          }}>
             {notification}
           </div>
         )}
 
-        {/* Top Header */}
+        {/* Header */}
         <div className="admin-header-bar">
           <div className="quiz-brand" style={{ margin: 0 }}>
             <span className="brand-badge" style={{ background: "#2563eb" }}>HOST HUB</span>
             <span className="brand-title">QuizBattle Command Center</span>
           </div>
-
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             <button className="btn btn-secondary btn-sm" onClick={copyStudentLink}>
               📋 Copy Student Link
             </button>
-            <a
-              href="/display"
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-primary btn-sm"
-            >
-              📺 Open Projector Screen ↗
+            <a href="/display" target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
+              📺 Projector Screen ↗
             </a>
             <button
               className="btn btn-secondary btn-sm"
               onClick={() => {
-                sessionStorage.removeItem("quizbattle-admin-auth");
+                clearAdminPassword();
+                sessionStorage.removeItem("quizbattle-admin-pw");
                 setIsAuthenticated(false);
               }}
             >
@@ -245,57 +254,38 @@ export default function AdminPage() {
         {/* Live Metrics Row */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "14px", marginBottom: "20px" }}>
           <div className="score-card">
-            <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Current Status</div>
+            <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Status</div>
             <div style={{ marginTop: "6px" }}>
-              {currentStatus === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE</span>}
-              {currentStatus === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 3s TIMER</span>}
-              {currentStatus === "WAITING" && <span className="badge badge-waiting">WAITING</span>}
-              {currentStatus === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
-              {currentStatus === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
-              {currentStatus === "FINISHED" && <span className="badge badge-finished">FINISHED</span>}
+              {status === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE</span>}
+              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 3s TIMER</span>}
+              {status === "WAITING" && <span className="badge badge-waiting">WAITING</span>}
+              {status === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
+              {status === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
+              {status === "FINISHED" && <span className="badge badge-finished">FINISHED</span>}
             </div>
           </div>
 
           <div className="score-card">
-            <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Students Registered</div>
+            <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Active Question</div>
             <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#f8fafc", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
-              {summary.participantsCount ?? 0}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "2px" }}>
-              🔵 {summary.stackCount ?? 0} Stack | 🟢 {summary.innovatorsCount ?? 0} Innovators
-            </div>
-          </div>
-
-          <div className="score-card">
-            <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Answers Received</div>
-            <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#38bdf8", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
-              {summary.answersReceived ?? 0} / {summary.participantsCount ?? 0}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "2px" }}>
-              {summary.answersPending ?? 0} pending response
+              Q{currentQNum}
             </div>
           </div>
 
           <div className="score-card stack">
             <div className="score-card-title">⚡ Stack.push</div>
-            <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>
-              {summary.clubs?.find((c: any) => c.name === "STACK_PUSH")?.score ?? 0}
-            </div>
+            <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>{stackScore}</div>
           </div>
 
           <div className="score-card innovators">
             <div className="score-card-title">🚀 IT Innovators</div>
-            <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>
-              {summary.clubs?.find((c: any) => c.name === "IT_INNOVATORS")?.score ?? 0}
-            </div>
+            <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>{innovScore}</div>
           </div>
         </div>
 
-        {/* Main Grid: Left Controls, Right Question Selector & Submissions */}
         <div className="admin-layout-grid">
-          {/* LEFT: Active Question & Host Action Controls */}
+          {/* LEFT: Controls */}
           <div>
-            {/* Action Bar Card */}
             <div className="admin-actions-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
                 <div>
@@ -303,56 +293,51 @@ export default function AdminPage() {
                     {activeQuestion?.roundName || "Round 1"}
                   </span>
                   <h2 style={{ fontSize: "1.4rem", fontWeight: 800, marginTop: "2px" }}>
-                    Active Question #{activeQuestion?.questionNumber || 1} (+{activeQuestion?.points || 1} pts)
+                    Active Question #{currentQNum} (+{activeQuestion?.points || 1} pts)
                   </h2>
                 </div>
-
                 <div style={{ display: "flex", gap: "8px" }}>
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => runHostAction("/api/admin/prev-question", {}, "Moved to previous question")}
-                    disabled={actionLoading || (activeQuestion?.questionNumber || 1) <= 1}
-                  >
-                    ◀ Prev
-                  </button>
+                    onClick={() => runHostAction("/api/admin/prev-question", {}, "◀ Previous question")}
+                    disabled={actionLoading || currentQNum <= 1}
+                  >◀ Prev</button>
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => runHostAction("/api/admin/next-question", {}, "Moved to next question")}
+                    onClick={() => runHostAction("/api/admin/next-question", {}, "▶ Next question")}
                     disabled={actionLoading}
-                  >
-                    Next ▶
-                  </button>
+                  >Next ▶</button>
                 </div>
               </div>
 
-              {/* Active Question Preview text */}
+              {/* Active Question Preview */}
               {activeQuestion && (
-                <div style={{ background: "rgba(15, 23, 42, 0.7)", borderRadius: "10px", padding: "14px", marginTop: "14px", border: "1px solid var(--border-subtle)" }}>
+                <div style={{ background: "rgba(15,23,42,0.7)", borderRadius: "10px", padding: "14px", marginTop: "14px", border: "1px solid var(--border-subtle)" }}>
                   <div style={{ fontSize: "1.05rem", fontWeight: 700 }}>{activeQuestion.questionText}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px", fontSize: "0.85rem" }}>
-                    <div style={{ color: activeQuestion.correctAnswer === "A" ? "#4ade80" : "#cbd5e1", fontWeight: activeQuestion.correctAnswer === "A" ? 800 : 500 }}>
-                      <strong>A)</strong> {activeQuestion.optionA} {activeQuestion.correctAnswer === "A" && "✓ (Correct)"}
-                    </div>
-                    <div style={{ color: activeQuestion.correctAnswer === "B" ? "#4ade80" : "#cbd5e1", fontWeight: activeQuestion.correctAnswer === "B" ? 800 : 500 }}>
-                      <strong>B)</strong> {activeQuestion.optionB} {activeQuestion.correctAnswer === "B" && "✓ (Correct)"}
-                    </div>
-                    <div style={{ color: activeQuestion.correctAnswer === "C" ? "#4ade80" : "#cbd5e1", fontWeight: activeQuestion.correctAnswer === "C" ? 800 : 500 }}>
-                      <strong>C)</strong> {activeQuestion.optionC} {activeQuestion.correctAnswer === "C" && "✓ (Correct)"}
-                    </div>
-                    <div style={{ color: activeQuestion.correctAnswer === "D" ? "#4ade80" : "#cbd5e1", fontWeight: activeQuestion.correctAnswer === "D" ? 800 : 500 }}>
-                      <strong>D)</strong> {activeQuestion.optionD} {activeQuestion.correctAnswer === "D" && "✓ (Correct)"}
-                    </div>
+                    {(["A", "B", "C", "D"] as const).map(key => (
+                      <div
+                        key={key}
+                        style={{
+                          color: activeQuestion.correctAnswer === key ? "#4ade80" : "#cbd5e1",
+                          fontWeight: activeQuestion.correctAnswer === key ? 800 : 500,
+                        }}
+                      >
+                        <strong>{key})</strong> {activeQuestion[`option${key}` as keyof Question] as string}
+                        {activeQuestion.correctAnswer === key && " ✓"}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
-              {/* Big Action Buttons */}
+              {/* Main Action Buttons */}
               <div className="action-buttons-row">
                 <button
                   className="btn btn-success btn-lg"
                   style={{ flex: "1 1 200px" }}
-                  onClick={() => runHostAction("/api/admin/start-countdown", { questionId: activeQuestion?.id }, "⏱️ 3-Second Countdown Started!")}
-                  disabled={actionLoading || currentStatus === "LIVE" || currentStatus === "COUNTDOWN"}
+                  onClick={() => runHostAction("/api/admin/start-countdown", { questionNumber: currentQNum }, "⏱️ Countdown started!")}
+                  disabled={actionLoading || status === "LIVE" || status === "COUNTDOWN"}
                 >
                   ⏱️ START (3s Timer)
                 </button>
@@ -361,7 +346,7 @@ export default function AdminPage() {
                   className="btn btn-warning"
                   style={{ flex: "1 1 140px" }}
                   onClick={() => runHostAction("/api/admin/lock-answers", {}, "🔒 Answers Locked")}
-                  disabled={actionLoading || currentStatus !== "LIVE"}
+                  disabled={actionLoading || status !== "LIVE"}
                 >
                   🔒 LOCK ANSWERS
                 </button>
@@ -369,8 +354,8 @@ export default function AdminPage() {
                 <button
                   className="btn btn-primary"
                   style={{ flex: "1 1 150px" }}
-                  onClick={() => runHostAction("/api/admin/reveal-answer", {}, "👁️ Answer Revealed to all!")}
-                  disabled={actionLoading || (currentStatus !== "LOCKED" && currentStatus !== "LIVE")}
+                  onClick={() => runHostAction("/api/admin/reveal-answer", {}, "👁️ Answer Revealed!")}
+                  disabled={actionLoading || (status !== "LOCKED" && status !== "LIVE")}
                 >
                   👁️ REVEAL ANSWER
                 </button>
@@ -378,128 +363,59 @@ export default function AdminPage() {
                 <button
                   className="btn btn-secondary"
                   style={{ flex: "1 1 140px" }}
-                  onClick={() => runHostAction("/api/admin/next-question", {}, "➡️ Advanced to Next Question")}
+                  onClick={() => runHostAction("/api/admin/next-question", {}, "➡️ Next Question")}
                   disabled={actionLoading}
                 >
                   ➡️ NEXT QUESTION
                 </button>
               </div>
 
-              {/* TEST & CLEAR CENTER FOR TEACHER TESTING */}
+              {/* Teacher Testing Zone */}
               <div className="danger-zone-box">
-                <div className="danger-zone-title">
-                  <span>⚡ Teacher Testing & Clear Center</span>
-                </div>
+                <div className="danger-zone-title">⚡ Teacher Testing & Clear Center</div>
                 <p style={{ fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "12px" }}>
                   Reset scores anytime before or after demonstrating to your teacher.
                 </p>
-
                 <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                   <button
                     className="btn btn-warning btn-sm"
                     onClick={() => {
-                      if (confirm("Reset all responses and set scores to 0? (Students remain joined)")) {
-                        runHostAction("/api/admin/reset-scores", {}, "🔄 Scores & responses reset! Ready for re-test.");
+                      if (confirm("Reset all scores and responses? (Students stay joined)")) {
+                        runHostAction("/api/admin/reset-scores", {}, "🔄 Scores reset!");
                       }
                     }}
                     disabled={actionLoading}
-                    title="Clears all answers so teacher/students can test again immediately"
                   >
-                    🔄 Clear Responses & Scores (Keep Students)
+                    🔄 Clear Scores (Keep Students)
                   </button>
-
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => {
-                      runHostAction("/api/admin/reset-current-question", {}, "Reset active question submissions.");
-                    }}
-                    disabled={actionLoading}
-                  >
-                    Reset Current Question
-                  </button>
-
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => {
-                      if (confirm("Are you sure you want a COMPLETE FRESH WIPE? All participants, scores, and submissions will be cleared.")) {
-                        runHostAction("/api/admin/reset-all-fresh", {}, "✨ Everything cleared fresh back to Question 1.");
+                      if (confirm("COMPLETE FRESH WIPE — all data cleared?")) {
+                        runHostAction("/api/admin/reset-all-fresh", {}, "✨ Everything cleared.");
                       }
                     }}
                     disabled={actionLoading}
                   >
-                    ⚠️ Complete Fresh Wipe (All Data)
+                    ⚠️ Complete Fresh Wipe
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => {
+                      if (confirm("End the quiz and show final scores?")) {
+                        runHostAction("/api/admin/end-quiz", {}, "🏁 Quiz ended!");
+                      }
+                    }}
+                    disabled={actionLoading}
+                  >
+                    🏁 End Quiz
                   </button>
                 </div>
               </div>
             </div>
-
-            {/* Live Submissions Feed for Current Question */}
-            <div className="glass-card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>
-                  Live Responses Feed (Q{activeQuestion?.questionNumber})
-                </h3>
-                <span className="badge badge-waiting">{submissions.length} Answers</span>
-              </div>
-
-              {submissions.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "24px", color: "var(--text-muted)", fontSize: "0.9rem" }}>
-                  No answers submitted yet for this question. When students click an option, their response will appear here in real-time.
-                </div>
-              ) : (
-                <div className="submissions-table-container">
-                  <table className="submissions-table">
-                    <thead>
-                      <tr>
-                        <th>Participant</th>
-                        <th>Club</th>
-                        <th>Option</th>
-                        <th>Speed</th>
-                        <th>Result</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {submissions.map((sub) => (
-                        <tr key={sub.id}>
-                          <td style={{ fontWeight: 700 }}>{sub.participantName}</td>
-                          <td>
-                            <span
-                              style={{
-                                fontSize: "0.75rem",
-                                fontWeight: 800,
-                                color: sub.club === "STACK_PUSH" ? "#60a5fa" : "#34d399",
-                              }}
-                            >
-                              {sub.club === "STACK_PUSH" ? "Stack.push" : "IT Innovators"}
-                            </span>
-                          </td>
-                          <td style={{ fontWeight: 800, fontFamily: "var(--font-mono)" }}>
-                            {sub.answer}
-                          </td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.8rem", fontFamily: "var(--font-mono)" }}>
-                            {(sub.responseTimeMs / 1000).toFixed(2)}s
-                          </td>
-                          <td>
-                            {currentStatus === "REVEALED" ? (
-                              sub.isCorrect ? (
-                                <span style={{ color: "#4ade80", fontWeight: 800 }}>✓ +{sub.pointsAwarded} pts</span>
-                              ) : (
-                                <span style={{ color: "#f87171", fontWeight: 700 }}>✕ 0 pts</span>
-                              )
-                            ) : (
-                              <span style={{ color: "#38bdf8" }}>Submitted</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* RIGHT: 100-Question Selector & Browser */}
+          {/* RIGHT: Question Browser */}
           <div>
             <div className="glass-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -507,62 +423,38 @@ export default function AdminPage() {
                 <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>100 Questions</span>
               </div>
 
-              {/* Round Filter Tabs */}
               <div className="round-filter-tabs">
-                <button
-                  className={`filter-tab-btn ${roundFilter === "all" ? "active" : ""}`}
-                  onClick={() => setRoundFilter("all")}
-                >
-                  All (100)
-                </button>
-                <button
-                  className={`filter-tab-btn ${roundFilter === "1" ? "active" : ""}`}
-                  onClick={() => setRoundFilter("1")}
-                >
-                  R1: Basics (1-20)
-                </button>
-                <button
-                  className={`filter-tab-btn ${roundFilter === "2" ? "active" : ""}`}
-                  onClick={() => setRoundFilter("2")}
-                >
-                  R2: Web (21-40)
-                </button>
-                <button
-                  className={`filter-tab-btn ${roundFilter === "3" ? "active" : ""}`}
-                  onClick={() => setRoundFilter("3")}
-                >
-                  R3: Coding (41-60)
-                </button>
-                <button
-                  className={`filter-tab-btn ${roundFilter === "4" ? "active" : ""}`}
-                  onClick={() => setRoundFilter("4")}
-                >
-                  R4: AI/Cyber (61-80)
-                </button>
-                <button
-                  className={`filter-tab-btn ${roundFilter === "5" ? "active" : ""}`}
-                  onClick={() => setRoundFilter("5")}
-                >
-                  R5: Hack (81-100)
-                </button>
+                {[
+                  { label: "All (100)", value: "all" },
+                  { label: "R1: Basics", value: "1" },
+                  { label: "R2: Web", value: "2" },
+                  { label: "R3: Coding", value: "3" },
+                  { label: "R4: AI/Cyber", value: "4" },
+                  { label: "R5: Hack", value: "5" },
+                ].map(({ label, value }) => (
+                  <button
+                    key={value}
+                    className={`filter-tab-btn ${roundFilter === value ? "active" : ""}`}
+                    onClick={() => setRoundFilter(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
-              {/* Questions 1-100 Grid */}
               <div className="questions-chip-grid">
                 {questions
-                  .filter((q) => roundFilter === "all" || String(q.roundId) === roundFilter)
-                  .map((q) => {
-                    const isActive = (activeQuestion?.questionNumber || 1) === q.questionNumber;
+                  .filter(q => roundFilter === "all" || String(q.roundId) === roundFilter)
+                  .map(q => {
+                    const isActive = currentQNum === q.questionNumber;
                     const isSelected = selectedQuestionNumber === q.questionNumber;
                     return (
                       <div
                         key={q.id}
                         className={`question-chip ${isActive ? "active" : ""}`}
-                        style={{
-                          border: isSelected && !isActive ? "2px solid #60a5fa" : undefined,
-                        }}
+                        style={{ border: isSelected && !isActive ? "2px solid #60a5fa" : undefined }}
                         onClick={() => setSelectedQuestionNumber(q.questionNumber)}
-                        title={`Q${q.questionNumber}: ${q.questionText.slice(0, 50)}...`}
+                        title={`Q${q.questionNumber}: ${q.questionText.slice(0, 60)}`}
                       >
                         Q{q.questionNumber}
                         <div style={{ fontSize: "0.65rem", opacity: 0.8 }}>{q.points}p</div>
@@ -571,37 +463,44 @@ export default function AdminPage() {
                   })}
               </div>
 
-              {/* Question Inspector Card */}
               {previewQuestion && (
-                <div style={{ marginTop: "16px", padding: "14px", background: "rgba(15, 23, 42, 0.8)", borderRadius: "10px", border: "1px solid var(--border-subtle)" }}>
+                <div style={{ marginTop: "16px", padding: "14px", background: "rgba(15,23,42,0.8)", borderRadius: "10px", border: "1px solid var(--border-subtle)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
                     <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#38bdf8" }}>
                       {previewQuestion.roundName}
                     </span>
                     <span className="question-points-pill">+{previewQuestion.points} pts</span>
                   </div>
-
-                  <div style={{ fontWeight: 800, fontSize: "0.95rem", marginBottom: "10px" }}>
+                  <div style={{ fontWeight: 800, fontSize: "0.95rem", marginBottom: "12px" }}>
                     Q{previewQuestion.questionNumber}. {previewQuestion.questionText}
                   </div>
-
-                  <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-                    <button
-                      className="btn btn-primary btn-block btn-sm"
-                      onClick={() => {
-                        runHostAction(
-                          "/api/admin/select-question",
-                          { questionNumber: previewQuestion.questionNumber },
-                          `Switched active question to Q${previewQuestion.questionNumber}`,
-                        );
-                      }}
-                      disabled={actionLoading || activeQuestion?.questionNumber === previewQuestion.questionNumber}
-                    >
-                      {activeQuestion?.questionNumber === previewQuestion.questionNumber
-                        ? "Currently Active"
-                        : `Activate Q${previewQuestion.questionNumber} Now`}
-                    </button>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", fontSize: "0.82rem", marginBottom: "12px" }}>
+                    {(["A", "B", "C", "D"] as const).map(key => (
+                      <div
+                        key={key}
+                        style={{
+                          color: previewQuestion.correctAnswer === key ? "#4ade80" : "#94a3b8",
+                          fontWeight: previewQuestion.correctAnswer === key ? 800 : 400,
+                        }}
+                      >
+                        <strong>{key})</strong> {previewQuestion[`option${key}` as keyof Question] as string}
+                        {previewQuestion.correctAnswer === key && " ✓"}
+                      </div>
+                    ))}
                   </div>
+                  <button
+                    className="btn btn-primary btn-block btn-sm"
+                    onClick={() => runHostAction(
+                      "/api/admin/select-question",
+                      { questionNumber: previewQuestion.questionNumber },
+                      `Switched to Q${previewQuestion.questionNumber}`,
+                    )}
+                    disabled={actionLoading || currentQNum === previewQuestion.questionNumber}
+                  >
+                    {currentQNum === previewQuestion.questionNumber
+                      ? "Currently Active"
+                      : `Activate Q${previewQuestion.questionNumber}`}
+                  </button>
                 </div>
               )}
             </div>

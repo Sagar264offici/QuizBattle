@@ -42,6 +42,19 @@ A real-time IT club quiz platform for a live college event.
 - CLIENT_URL: frontend origin for CORS
 - NODE_ENV: development/production
 
+### Vercel deployment (required)
+
+Vercel functions do not share in-memory state. Create an Upstash Redis database
+and add these two variables in the Vercel project settings before deploying:
+
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+
+The API deliberately returns a clear `503` if either is missing in Vercel,
+rather than serving different quiz states to different students. Set
+`ADMIN_PASSWORD` there as well. Locally, the API uses temporary in-memory state
+for development, so Redis is optional.
+
 ## Admin login
 
 - URL: http://localhost:5173/admin/login
@@ -84,8 +97,8 @@ Bind the host to 0.0.0.0 by starting the app on the laptop connected to the even
 
 - If the database is stale, run: npx prisma db push
 - If the seed is not loaded, run: npm run seed
-- If Socket.IO clients are disconnected, refresh the browser and rejoin the session
-- If admin auth fails, verify the ADMIN_PASSWORD value in .env
+- On Vercel, verify both Upstash Redis variables are present if the API reports a storage configuration error.
+- If admin auth fails, verify the ADMIN_PASSWORD value in Vercel (or `.env` locally).
 
 ## Notes
 

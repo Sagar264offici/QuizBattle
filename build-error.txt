@@ -1,0 +1,18 @@
+
+> quizbattle@1.0.0 build
+> vite build && tsc -p server/tsconfig.json
+
+vite v8.2.1 building client environment for production...
+[2Ktransforming...✓ 60 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.41 kB │ gzip:   0.28 kB
+dist/assets/index-CNiliqRh.css   12.74 kB │ gzip:   3.39 kB
+dist/assets/index-CrCnIeGB.js   520.99 kB │ gzip: 155.87 kB
+
+✓ built in 151ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
