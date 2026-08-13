@@ -1670,7 +1670,8 @@ r.post("/participants/register", async (req, res) => {
     if (!n) return res.status(400).json({ error: "Name is required" });
     if (!isValidClub(String(club || ""))) return res.status(400).json({ error: "Valid club required" });
 
-    const id = await redis.incr("quiz:nextParticipantId");
+    const nextId = await redis.incr("quiz:nextParticipantId");
+    const id = Number(nextId) || Date.now();
 
     const token = encodeToken({ id, name: n, club: String(club) });
     const participant = { id, name: n, club, sessionToken: token, score: 0, correctCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
