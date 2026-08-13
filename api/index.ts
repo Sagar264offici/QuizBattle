@@ -1418,6 +1418,8 @@ interface QuizSessionState {
   currentQuestionId: number;
   questionStartedAt: string | null;
   countdownEndsAt: string | null;
+  questionEndsAt: string | null;
+  durationSeconds: number;
   correctAnswer: string | null;
   updatedAt: string;
 }
@@ -1427,6 +1429,8 @@ const DEFAULT_STATE: QuizSessionState = {
   currentQuestionId: 1,
   questionStartedAt: null,
   countdownEndsAt: null,
+  questionEndsAt: null,
+  durationSeconds: 30,
   correctAnswer: null,
   updatedAt: new Date().toISOString(),
 };
@@ -1454,16 +1458,28 @@ async function getState(): Promise<QuizSessionState> {
   if (!raw) return { ...DEFAULT_STATE };
   const state: QuizSessionState = typeof raw === "string" ? JSON.parse(raw) : raw;
 
-  // Auto-transition COUNTDOWN → LIVE
+  // 1. Auto-transition COUNTDOWN (3s) -> LIVE (30s)
   if (state.status === "COUNTDOWN" && state.countdownEndsAt) {
     if (new Date(state.countdownEndsAt).getTime() <= Date.now()) {
       state.status = "LIVE";
       state.questionStartedAt = new Date().toISOString();
       state.countdownEndsAt = null;
+      state.questionEndsAt = new Date(Date.now() + 30 * 1000).toISOString();
+      state.durationSeconds = 30;
       state.updatedAt = new Date().toISOString();
       await redis.set("quiz:state", JSON.stringify(state));
     }
   }
+
+  // 2. Auto-transition LIVE (30s) -> LOCKED
+  if (state.status === "LIVE" && state.questionEndsAt) {
+    if (new Date(state.questionEndsAt).getTime() <= Date.now()) {
+      state.status = "LOCKED";
+      state.updatedAt = new Date().toISOString();
+      await redis.set("quiz:state", JSON.stringify(state));
+    }
+  }
+
   return state;
 }
 
@@ -1484,6 +1500,7 @@ async function getParticipant(token: string) {
   if (d) {
     const p = { id: d.id, name: d.name, club: d.club, sessionToken: token, score: 0, correctCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
     await redis.set(`p:${token}`, JSON.stringify(p), { ex: 86400 });
+    await redisCommand(["SADD", "quiz:participantTokens", token]);
     return p;
   }
   return null;
@@ -1491,6 +1508,7 @@ async function getParticipant(token: string) {
 
 async function saveParticipant(p: any) {
   await redis.set(`p:${p.sessionToken}`, JSON.stringify(p), { ex: 86400 });
+  await redisCommand(["SADD", "quiz:participantTokens", p.sessionToken]);
 }
 
 async function getSubmission(pid: number, qid: number) {
@@ -1545,9 +1563,9 @@ const r = express.Router();
 // ── Health ────────────────────────────────────────────────────────────────────
 r.get("/health", async (_req, res) => {
   try {
-    await redis.ping();
+    const pong = await redis.ping();
     const s = await getState();
-    res.json({ ok: true, status: s.status, redis: true });
+    res.json({ ok: true, status: s.status, redis: pong });
   } catch (e: any) {
     res.json({ ok: false, redis: false, error: e.message });
   }
@@ -1564,17 +1582,36 @@ r.post("/admin/login", (req, res) => {
 
 // ── Admin Actions ─────────────────────────────────────────────────────────────
 r.post("/admin/start-countdown", requireAdmin, async (req, res) => {
-  const { questionNumber, seconds } = req.body ?? {};
+  const { questionNumber } = req.body ?? {};
   const q = getQuestion(Number(questionNumber) || (await getState()).currentQuestionId || 1);
-  const endsAt = new Date(Date.now() + (Number(seconds) || 3) * 1000).toISOString();
-  const state = await setState({ status: "COUNTDOWN", currentQuestionId: q.questionNumber, countdownEndsAt: endsAt, questionStartedAt: null, correctAnswer: null });
+  const now = Date.now();
+  const endsAt = new Date(now + 3000).toISOString();
+  const qEndsAt = new Date(now + 33000).toISOString();
+  const state = await setState({
+    status: "COUNTDOWN",
+    currentQuestionId: q.questionNumber,
+    countdownEndsAt: endsAt,
+    questionEndsAt: qEndsAt,
+    durationSeconds: 30,
+    questionStartedAt: null,
+    correctAnswer: null,
+  });
   res.json({ ok: true, state });
 });
 
 r.post("/admin/start-question", requireAdmin, async (req, res) => {
   const { questionNumber } = req.body ?? {};
   const q = getQuestion(Number(questionNumber) || (await getState()).currentQuestionId || 1);
-  const state = await setState({ status: "LIVE", currentQuestionId: q.questionNumber, questionStartedAt: new Date().toISOString(), countdownEndsAt: null, correctAnswer: null });
+  const now = Date.now();
+  const state = await setState({
+    status: "LIVE",
+    currentQuestionId: q.questionNumber,
+    questionStartedAt: new Date(now).toISOString(),
+    countdownEndsAt: null,
+    questionEndsAt: new Date(now + 30000).toISOString(),
+    durationSeconds: 30,
+    correctAnswer: null,
+  });
   res.json({ ok: true, state });
 });
 
@@ -1594,28 +1631,72 @@ r.post("/admin/next-question", requireAdmin, async (req, res) => {
   const cur = await getState();
   const { questionNumber } = req.body ?? {};
   const next = questionNumber ? Number(questionNumber) : Math.min((cur.currentQuestionId || 1) + 1, 100);
-  const state = await setState({ status: "WAITING", currentQuestionId: next, questionStartedAt: null, countdownEndsAt: null, correctAnswer: null });
+  const state = await setState({
+    status: "WAITING",
+    currentQuestionId: next,
+    questionStartedAt: null,
+    countdownEndsAt: null,
+    questionEndsAt: null,
+    correctAnswer: null,
+  });
   res.json({ ok: true, state });
 });
 
 r.post("/admin/prev-question", requireAdmin, async (_req, res) => {
   const cur = await getState();
   const prev = Math.max((cur.currentQuestionId || 1) - 1, 1);
-  const state = await setState({ status: "WAITING", currentQuestionId: prev, questionStartedAt: null, countdownEndsAt: null, correctAnswer: null });
+  const state = await setState({
+    status: "WAITING",
+    currentQuestionId: prev,
+    questionStartedAt: null,
+    countdownEndsAt: null,
+    questionEndsAt: null,
+    correctAnswer: null,
+  });
   res.json({ ok: true, state });
 });
 
 r.post("/admin/select-question", requireAdmin, async (req, res) => {
   const { questionNumber } = req.body ?? {};
   if (!questionNumber) return res.status(400).json({ error: "questionNumber required" });
-  const state = await setState({ status: "WAITING", currentQuestionId: Number(questionNumber), questionStartedAt: null, countdownEndsAt: null, correctAnswer: null });
+  const state = await setState({
+    status: "WAITING",
+    currentQuestionId: Number(questionNumber),
+    questionStartedAt: null,
+    countdownEndsAt: null,
+    questionEndsAt: null,
+    correctAnswer: null,
+  });
   res.json({ ok: true, state });
 });
 
 r.post("/admin/reset-scores", requireAdmin, async (_req, res) => {
   await redis.set("score:STACK_PUSH", "0");
   await redis.set("score:IT_INNOVATORS", "0");
-  const state = await setState({ status: "WAITING", currentQuestionId: 1, questionStartedAt: null, countdownEndsAt: null, correctAnswer: null });
+
+  const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
+  const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+  for (const tok of tokens) {
+    const p = await getParticipant(tok);
+    if (p) {
+      p.score = 0;
+      p.correctCount = 0;
+      p.attemptCount = 0;
+      await redis.set(`p:${p.sessionToken}`, JSON.stringify(p), { ex: 86400 });
+      for (let q = 1; q <= 100; q++) {
+        await redisCommand(["DEL", `sub:${p.id}:${q}`]);
+      }
+    }
+  }
+
+  const state = await setState({
+    status: "WAITING",
+    currentQuestionId: 1,
+    questionStartedAt: null,
+    countdownEndsAt: null,
+    questionEndsAt: null,
+    correctAnswer: null,
+  });
   res.json({ ok: true, message: "Scores and responses reset successfully. Participants retained.", state });
 });
 
@@ -1624,7 +1705,14 @@ r.post("/admin/reset-all-fresh", requireAdmin, async (_req, res) => {
   await redis.set("score:STACK_PUSH", "0");
   await redis.set("score:IT_INNOVATORS", "0");
   await redis.set("quiz:nextParticipantId", "1");
-  const state = await setState({ status: "WAITING", currentQuestionId: 1, questionStartedAt: null, countdownEndsAt: null, correctAnswer: null });
+  const state = await setState({
+    status: "WAITING",
+    currentQuestionId: 1,
+    questionStartedAt: null,
+    countdownEndsAt: null,
+    questionEndsAt: null,
+    correctAnswer: null,
+  });
   res.json({ ok: true, message: "All data cleared", state });
 });
 
@@ -1638,10 +1726,44 @@ r.get("/admin/summary", requireAdmin, async (_req, res) => {
   const currentQ = getQuestion(state.currentQuestionId);
   const stackScore = await getClubScore("STACK_PUSH");
   const innovScore = await getClubScore("IT_INNOVATORS");
+
+  // Get all registered participant tokens
+  const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
+  const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+
+  const participants: any[] = [];
+  const currentSubmissions: any[] = [];
+
+  for (const tok of tokens) {
+    const p = await getParticipant(tok);
+    if (p) {
+      participants.push(p);
+      const sub = await getSubmission(p.id, currentQ.id);
+      if (sub) {
+        currentSubmissions.push(sub);
+      }
+    }
+  }
+
+  const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
+  const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
+
   res.json({
     session: { ...state, currentQuestion: currentQ },
     currentQuestionId: state.currentQuestionId,
-    clubs: [{ name: "STACK_PUSH", score: stackScore }, { name: "IT_INNOVATORS", score: innovScore }],
+    clubs: [
+      { name: "STACK_PUSH", score: stackScore },
+      { name: "IT_INNOVATORS", score: innovScore },
+    ],
+    participants,
+    participantsCount: participants.length,
+    stackParticipants,
+    innovatorsParticipants,
+    stackCount: stackParticipants.length,
+    innovatorsCount: innovatorsParticipants.length,
+    currentSubmissions,
+    answersReceived: currentSubmissions.length,
+    answersPending: Math.max(0, participants.length - currentSubmissions.length),
   });
 });
 
@@ -1702,6 +1824,8 @@ r.get("/participants/session", async (req, res) => {
     currentQuestion: showQuestion ? currentQ : null,
     sessionStatus: state.status,
     countdownEndsAt: state.countdownEndsAt,
+    questionEndsAt: state.questionEndsAt,
+    durationSeconds: state.durationSeconds || 30,
     correctAnswer: state.status === "REVEALED" ? state.correctAnswer : null,
   });
 });

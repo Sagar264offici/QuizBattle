@@ -35,7 +35,7 @@ const ANSWER_CACHE_KEY = "quizbattle-current-answer";
 function loadCachedAnswer(): CachedAnswer | null {
   try {
     const raw = localStorage.getItem(ANSWER_CACHE_KEY);
-    return raw ? JSON.parse(raw) as CachedAnswer : null;
+    return raw ? (JSON.parse(raw) as CachedAnswer) : null;
   } catch (_) {
     return null;
   }
@@ -50,35 +50,36 @@ function loadCachedParticipant(): Participant | null {
   try {
     const raw = localStorage.getItem("quizbattle-participant");
     return raw ? JSON.parse(raw) : null;
-  } catch (_) { return null; }
+  } catch (_) {
+    return null;
+  }
 }
 
 export default function StudentPage() {
   const [sessionToken, setSessionToken] = useState<string>(() => {
     return localStorage.getItem("quizbattle-session") || "";
   });
-  // Hydrate participant from cache so user never sees join form on refresh
   const [participant, setParticipantState] = useState<Participant | null>(() => {
     const token = localStorage.getItem("quizbattle-session");
     return token ? loadCachedParticipant() : null;
   });
   const [isSessionLoading, setIsSessionLoading] = useState<boolean>(() => {
-    // If we have a token but no cached participant, show loader instead of form
     const token = localStorage.getItem("quizbattle-session");
     return !!token && !loadCachedParticipant();
   });
 
-  // Wrapper that also persists to localStorage
   const setParticipant = (p: Participant | null) => {
     setParticipantState((current) => {
       if (
-        current && p &&
+        current &&
+        p &&
         current.id === p.id &&
         current.name === p.name &&
         current.club === p.club &&
         current.score === p.score &&
         current.sessionToken === p.sessionToken
-      ) return current;
+      )
+        return current;
       return p;
     });
     if (p) {
@@ -90,7 +91,7 @@ export default function StudentPage() {
 
   // Registration form
   const [regName, setRegName] = useState("");
-  const [regClub, setRegClub] = useState<"STACK_PUSH" | "IT_INNOVATORS" | "">("")
+  const [regClub, setRegClub] = useState<"STACK_PUSH" | "IT_INNOVATORS" | "">("");
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState("");
 
@@ -102,10 +103,12 @@ export default function StudentPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
-  
-  // 3-Second Countdown timer
+
+  // Timers: 3s Appearing Countdown & 30s Question Timer
   const [countdownEndsAt, setCountdownEndsAt] = useState<string | null>(null);
   const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
+  const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
+  const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
 
   // Live Club Scores
   const [clubScores, setClubScores] = useState({
@@ -116,7 +119,6 @@ export default function StudentPage() {
   const lastQuestionIdRef = useRef<number | null>(null);
   const sessionRequestRef = useRef(0);
   const sessionRequestInFlightRef = useRef(false);
-  const leaderboardRequestRef = useRef(0);
 
   // Sync session and participant data
   const syncSession = async (token?: string, force = false) => {
@@ -131,12 +133,13 @@ export default function StudentPage() {
         currentQuestion: Question | null;
         sessionStatus: string;
         countdownEndsAt: string | null;
+        questionEndsAt: string | null;
+        durationSeconds?: number;
         correctAnswer: string | null;
         userSubmission?: any;
         clubs?: Array<{ name: string; score: number }>;
       }>(`/api/participants/session?token=${encodeURIComponent(tok)}`);
 
-      // A late response from an older poll must never overwrite a newer state.
       if (requestId !== sessionRequestRef.current) return;
 
       if (data.participant) {
@@ -147,6 +150,7 @@ export default function StudentPage() {
         setStatus(data.sessionStatus);
       }
       setCountdownEndsAt(data.countdownEndsAt);
+      setQuestionEndsAt(data.questionEndsAt);
       setCorrectAnswer(data.correctAnswer);
 
       // Check if question changed
@@ -156,13 +160,11 @@ export default function StudentPage() {
         setSelectedAnswer(cached?.questionId === data.currentQuestion.id ? cached.answer : null);
       }
 
-      setQuestion((current) => current?.id === data.currentQuestion?.id ? current : data.currentQuestion);
+      setQuestion((current) => (current?.id === data.currentQuestion?.id ? current : data.currentQuestion));
       const cachedAnswer = loadCachedAnswer();
-      const answerForCurrentQuestion = data.currentQuestion && cachedAnswer?.questionId === data.currentQuestion.id
-        ? cachedAnswer
-        : null;
-      // A successful API response is authoritative. This also lets a host reset
-      // a question; failed polls never reach this branch and keep local state.
+      const answerForCurrentQuestion =
+        data.currentQuestion && cachedAnswer?.questionId === data.currentQuestion.id ? cachedAnswer : null;
+
       setHasSubmitted(Boolean(data.hasSubmitted));
       if (data.userSubmission?.answer) {
         setSelectedAnswer(data.userSubmission.answer);
@@ -171,50 +173,32 @@ export default function StudentPage() {
         }
       } else if (answerForCurrentQuestion) {
         setSelectedAnswer(answerForCurrentQuestion.answer);
-        if (answerForCurrentQuestion.submitted) {
-          saveCachedAnswer({ ...answerForCurrentQuestion, submitted: false });
-        }
       }
       if (data.clubs) {
-        const nextScores = {
+        setClubScores({
           STACK_PUSH: data.clubs.find((club) => club.name === "STACK_PUSH")?.score ?? 0,
           IT_INNOVATORS: data.clubs.find((club) => club.name === "IT_INNOVATORS")?.score ?? 0,
-        };
-        setClubScores((current) =>
-          current.STACK_PUSH === nextScores.STACK_PUSH && current.IT_INNOVATORS === nextScores.IT_INNOVATORS
-            ? current
-            : nextScores,
-        );
+        });
       }
     } catch (_) {
-      // Keep local cached state on transient network/serverless polling glitch
       if (requestId === sessionRequestRef.current) setIsSessionLoading(false);
     } finally {
       if (requestId === sessionRequestRef.current) sessionRequestInFlightRef.current = false;
     }
   };
 
-  // Sync leaderboard scores
   const syncLeaderboard = async () => {
-    const requestId = ++leaderboardRequestRef.current;
     try {
       const data = await fetchJson<{ clubs: Array<{ name: string; score: number }> }>("/api/leaderboard");
-      if (requestId !== leaderboardRequestRef.current) return;
       if (data.clubs) {
-        const nextScores = {
+        setClubScores({
           STACK_PUSH: data.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
           IT_INNOVATORS: data.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
-        };
-        setClubScores((current) =>
-          current.STACK_PUSH === nextScores.STACK_PUSH && current.IT_INNOVATORS === nextScores.IT_INNOVATORS
-            ? current
-            : nextScores,
-        );
+        });
       }
     } catch (_) {}
   };
 
-  // Session responses include club scores, so each student makes only one poll.
   useEffect(() => {
     if (sessionToken) {
       syncSession(sessionToken);
@@ -225,25 +209,20 @@ export default function StudentPage() {
       if (sessionToken) syncSession(sessionToken);
     }, 2000);
 
-    // Socket events for instantaneous push when supported
     socket.on("quiz:state", () => {
       if (sessionToken) syncSession(sessionToken);
-      syncLeaderboard();
-    });
-    socket.on("leaderboard:update", () => {
       syncLeaderboard();
     });
 
     return () => {
       clearInterval(interval);
       socket.off("quiz:state");
-      socket.off("leaderboard:update");
     };
   }, [sessionToken]);
 
-  // Countdown timer tick logic
+  // 3-Second Question Appearing Countdown timer tick logic
   useEffect(() => {
-    if (!countdownEndsAt) {
+    if (!countdownEndsAt || status !== "COUNTDOWN") {
       setCountdownRemaining(null);
       return;
     }
@@ -263,7 +242,28 @@ export default function StudentPage() {
     updateCountdown();
     const timer = setInterval(updateCountdown, 100);
     return () => clearInterval(timer);
-  }, [countdownEndsAt]);
+  }, [countdownEndsAt, status]);
+
+  // 30-Second Live Question Countdown timer tick logic
+  useEffect(() => {
+    if (!questionEndsAt || status !== "LIVE") {
+      setQuestionRemaining(null);
+      return;
+    }
+
+    const updateQTimer = () => {
+      const remainingMs = new Date(questionEndsAt).getTime() - Date.now();
+      const sec = Math.max(0, Math.ceil(remainingMs / 1000));
+      setQuestionRemaining(sec);
+      if (sec <= 0) {
+        setStatus("LOCKED");
+      }
+    };
+
+    updateQTimer();
+    const timer = setInterval(updateQTimer, 100);
+    return () => clearInterval(timer);
+  }, [questionEndsAt, status]);
 
   // Handle participant registration
   const handleRegister = async (e: React.FormEvent) => {
@@ -305,7 +305,7 @@ export default function StudentPage() {
 
   // Handle answer submission
   const handleSubmitAnswer = async () => {
-    if (!selectedAnswer || !question || !sessionToken || hasSubmitted || submitting) return;
+    if (!selectedAnswer || !question || !sessionToken || hasSubmitted || submitting || status !== "LIVE") return;
 
     setSubmitting(true);
     setErrorMessage("");
@@ -326,7 +326,6 @@ export default function StudentPage() {
 
       setHasSubmitted(true);
       saveCachedAnswer({ questionId: question.id, answer: selectedAnswer, submitted: true });
-      // Invalidate a poll that started before this answer was accepted.
       sessionRequestRef.current += 1;
       if (participant && res.participantScore !== undefined) {
         setParticipant({ ...participant, score: res.participantScore });
@@ -335,7 +334,6 @@ export default function StudentPage() {
       syncSession(sessionToken, true);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to submit answer");
-      // A request can reach the server even if the response was interrupted.
       syncSession(sessionToken, true);
     } finally {
       setSubmitting(false);
@@ -351,31 +349,77 @@ export default function StudentPage() {
     }
   };
 
-  // --- 1. LOADING STATE (has token but participant not yet resolved) ---
+  // --- 1. LOADING STATE ---
   if (isSessionLoading) {
     return (
       <div className="app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
         <div style={{ textAlign: "center", color: "var(--text-muted)" }}>
-          <div style={{ fontSize: "2rem", marginBottom: "12px" }}>⏳</div>
-          <div>Connecting to quiz...</div>
+          <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>⚡</div>
+          <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>Connecting to Battle Arena...</div>
         </div>
       </div>
     );
   }
 
-  // --- 2. RENDER JOIN / REGISTRATION FORM ---
+  // --- 2. RENDER JOIN / REGISTRATION FORM WITH BATTLE HERO BANNER ---
   if (!participant) {
     return (
       <div className="app-shell">
-        <div className="container-sm" style={{ marginTop: "40px" }}>
-          <div className="glass-card">
-            <div style={{ textAlign: "center", marginBottom: "24px" }}>
-              <span className="brand-badge">QUIZ BATTLE</span>
-              <h1 className="brand-title" style={{ fontSize: "1.8rem", marginTop: "8px" }}>
+        <div className="container-sm" style={{ marginTop: "30px", marginBottom: "40px" }}>
+          <div className="glass-card" style={{ padding: "24px" }}>
+            {/* Epic Battle Banner Image */}
+            <div style={{ textAlign: "center", marginBottom: "20px" }}>
+              <div
+                style={{
+                  position: "relative",
+                  borderRadius: "16px",
+                  overflow: "hidden",
+                  border: "2px solid rgba(59, 130, 246, 0.4)",
+                  boxShadow: "0 0 30px rgba(59, 130, 246, 0.25)",
+                  marginBottom: "16px",
+                }}
+              >
+                <img
+                  src="/battle-hero.jpg"
+                  alt="Quiz Battle Arena"
+                  style={{
+                    width: "100%",
+                    maxHeight: "220px",
+                    objectFit: "cover",
+                    display: "block",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    background: "linear-gradient(to top, rgba(3, 7, 18, 0.95), transparent)",
+                    padding: "16px 12px 8px",
+                  }}
+                >
+                  <span
+                    className="brand-badge"
+                    style={{
+                      background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+                      color: "#ffffff",
+                      fontWeight: 900,
+                      letterSpacing: "1.5px",
+                      fontSize: "0.85rem",
+                      boxShadow: "0 0 15px rgba(37, 99, 235, 0.5)",
+                    }}
+                  >
+                    ⚡ ARE YOU READY FOR BATTLE? ⚡
+                  </span>
+                </div>
+              </div>
+
+              <h1 className="brand-title" style={{ fontSize: "1.75rem", margin: "6px 0 2px" }}>
                 IT Club Championship
               </h1>
-              <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginTop: "6px" }}>
-                Join the live competition on your mobile or laptop
+              <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                Stack.push ⚡ vs IT Innovators 🚀 — Live Tech Battle
               </p>
             </div>
 
@@ -425,8 +469,9 @@ export default function StudentPage() {
                 type="submit"
                 className="btn btn-primary btn-block btn-lg"
                 disabled={regLoading || !regName.trim() || !regClub}
+                style={{ fontSize: "1.05rem", padding: "14px" }}
               >
-                {regLoading ? "Joining..." : "ENTER LIVE QUIZ →"}
+                {regLoading ? "Entering Battle Arena..." : "ENTER LIVE QUIZ →"}
               </button>
 
               <div style={{ marginTop: "20px", textAlign: "center", paddingTop: "14px", borderTop: "1px solid var(--border-subtle)" }}>
@@ -452,16 +497,16 @@ export default function StudentPage() {
     );
   }
 
-  // --- 2. RENDER LIVE STUDENT QUIZ INTERFACE ---
+  // --- 3. RENDER LIVE STUDENT QUIZ INTERFACE ---
   const isClubStack = participant.club === "STACK_PUSH";
 
   return (
     <div className="app-shell">
-      {/* 3-Second Animated Countdown Overlay */}
+      {/* 3-Second Question Appearing Countdown Overlay */}
       {countdownRemaining !== null && countdownRemaining > 0 && (
         <div className="countdown-overlay">
           <div className="countdown-number">{countdownRemaining}</div>
-          <div className="countdown-label">Next Question Starting...</div>
+          <div className="countdown-label">⚡ GET READY FOR QUESTION {question?.questionNumber || 1}! ⚡</div>
         </div>
       )}
 
@@ -474,7 +519,7 @@ export default function StudentPage() {
                 <span
                   style={{
                     display: "inline-block",
-                    padding: "3px 8px",
+                    padding: "4px 10px",
                     borderRadius: "6px",
                     fontSize: "0.75rem",
                     fontWeight: 800,
@@ -485,7 +530,7 @@ export default function StudentPage() {
                 >
                   {isClubStack ? "⚡ STACK.PUSH" : "🚀 IT INNOVATORS"}
                 </span>
-                <span style={{ fontSize: "1.1rem", fontWeight: 800 }}>{participant.name}</span>
+                <span style={{ fontSize: "1.15rem", fontWeight: 800 }}>{participant.name}</span>
               </div>
             </div>
 
@@ -526,9 +571,9 @@ export default function StudentPage() {
         <div className="glass-card">
           {/* Status Header */}
           <div className="question-header-bar">
-            <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               {status === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE</span>}
-              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> STARTING</span>}
+              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 3s TIMER</span>}
               {status === "WAITING" && <span className="badge badge-waiting">WAITING FOR HOST</span>}
               {status === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
               {status === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
@@ -538,7 +583,7 @@ export default function StudentPage() {
             {question && (
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <span className="question-round-title">{question.roundName}</span>
-                <span className="question-points-pill">+{question.points} {question.points === 1 ? "Point" : "Points"}</span>
+                <span className="question-points-pill">+{question.points} {question.points === 1 ? "Pt" : "Pts"}</span>
               </div>
             )}
           </div>
@@ -546,6 +591,48 @@ export default function StudentPage() {
           {/* ACTIVE QUESTION STATE (LIVE / LOCKED / REVEALED) */}
           {question && (status === "LIVE" || status === "LOCKED" || status === "REVEALED") ? (
             <div className="student-question-container" style={{ marginTop: "18px" }}>
+              {/* 30-Second Live Question Timer Bar */}
+              {status === "LIVE" && questionRemaining !== null && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    background: questionRemaining <= 5 ? "rgba(239, 68, 68, 0.2)" : "rgba(30, 41, 59, 0.75)",
+                    border: `1.5px solid ${questionRemaining <= 5 ? "#ef4444" : "#3b82f6"}`,
+                    borderRadius: "10px",
+                    padding: "8px 14px",
+                    marginBottom: "14px",
+                    boxShadow: questionRemaining <= 5 ? "0 0 15px rgba(239, 68, 68, 0.4)" : "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: "1.2rem",
+                      fontWeight: 900,
+                      fontFamily: "var(--font-mono)",
+                      color: questionRemaining <= 5 ? "#f87171" : "#38bdf8",
+                      minWidth: "65px",
+                    }}
+                  >
+                    ⏱️ {questionRemaining}s
+                  </div>
+                  <div style={{ flex: 1, background: "rgba(255,255,255,0.1)", borderRadius: "999px", height: "8px", overflow: "hidden" }}>
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${Math.min(100, Math.max(0, (questionRemaining / 30) * 100))}%`,
+                        background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
+                        transition: "width 0.1s linear",
+                      }}
+                    />
+                  </div>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)" }}>
+                    {questionRemaining <= 5 ? "HURRY!" : "30s Limit"}
+                  </span>
+                </div>
+              )}
+
               {/* Question Text Box */}
               <div className="question-text-box">
                 <div className="question-num-tag">Question {question.questionNumber} of 100</div>
@@ -572,8 +659,6 @@ export default function StudentPage() {
                       onClick={() => {
                         if (status === "LIVE" && !hasSubmitted) {
                           setSelectedAnswer(key);
-                          saveCachedAnswer({ questionId: question.id, answer: key, submitted: false });
-                          setErrorMessage("");
                         }
                       }}
                       disabled={status !== "LIVE" || hasSubmitted}
@@ -586,14 +671,15 @@ export default function StudentPage() {
               </div>
 
               {/* Action / Feedback */}
-              <div style={{ marginTop: "10px" }}>
+              <div style={{ marginTop: "16px" }}>
                 {status === "LIVE" && !hasSubmitted && (
                   <button
                     className="btn btn-success btn-block btn-lg"
                     onClick={handleSubmitAnswer}
                     disabled={!selectedAnswer || submitting}
+                    style={{ padding: "14px", fontSize: "1.05rem" }}
                   >
-                    {submitting ? "Submitting..." : selectedAnswer ? `LOCK IN OPTION ${selectedAnswer} →` : "Select an Option to Submit"}
+                    {submitting ? "Submitting..." : selectedAnswer ? `LOCK IN OPTION ${selectedAnswer} →` : "Select an Option Above to Submit"}
                   </button>
                 )}
 
@@ -609,7 +695,7 @@ export default function StudentPage() {
                       fontWeight: 800,
                     }}
                   >
-                    ✓ Option {selectedAnswer} Submitted! Waiting for host to reveal results...
+                    ✓ Option {selectedAnswer} Locked in! Waiting for host to reveal...
                   </div>
                 )}
 
@@ -625,7 +711,7 @@ export default function StudentPage() {
                       fontWeight: 800,
                     }}
                   >
-                    🔒 Time's up! Answers locked by host.
+                    🔒 30 Seconds are up! Answers locked by host.
                   </div>
                 )}
 
@@ -661,17 +747,17 @@ export default function StudentPage() {
             </div>
           ) : (
             /* WAITING OR FINISHED STATE */
-            <div className="status-state-card">
+            <div className="status-state-card" style={{ padding: "36px 20px" }}>
               <div className="status-icon-bubble">
-                {status === "FINISHED" ? "🏆" : "⏳"}
+                {status === "FINISHED" ? "🏆" : "⚡"}
               </div>
-              <h2 style={{ fontSize: "1.5rem", fontWeight: 800 }}>
-                {status === "FINISHED" ? "QUIZ BATTLE FINISHED!" : "Waiting for Host..."}
+              <h2 style={{ fontSize: "1.5rem", fontWeight: 800, marginTop: "10px" }}>
+                {status === "FINISHED" ? "QUIZ BATTLE FINISHED!" : "Waiting for Host to Start Question..."}
               </h2>
-              <p style={{ color: "var(--text-muted)", maxWidth: 460 }}>
+              <p style={{ color: "var(--text-muted)", maxWidth: 480, margin: "8px auto 0" }}>
                 {status === "FINISHED"
-                  ? "Thank you for participating! Check the big screen for final winner announcements."
-                  : "The host is preparing the next question. As soon as the host starts, a 3-second timer will appear and the question will show here!"}
+                  ? "Thank you for participating! Check the big projector screen for final results."
+                  : "As soon as the host launches the question, a 3-second countdown will appear followed by a 30-second timer to answer!"}
               </p>
             </div>
           )}

@@ -22,7 +22,10 @@ export default function DisplayPage() {
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [countdownEndsAt, setCountdownEndsAt] = useState<string | null>(null);
   const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
-  
+
+  const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
+  const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
+
   const [clubScores, setClubScores] = useState({
     STACK_PUSH: 0,
     IT_INNOVATORS: 0,
@@ -36,6 +39,7 @@ export default function DisplayPage() {
             status: string;
             currentQuestionId: number | null;
             countdownEndsAt: string | null;
+            questionEndsAt: string | null;
             correctAnswer: string | null;
           };
           currentQuestion: Question | null;
@@ -47,6 +51,7 @@ export default function DisplayPage() {
       setQuestion(stateData.currentQuestion);
       setCorrectAnswer(stateData.session.correctAnswer);
       setCountdownEndsAt(stateData.session.countdownEndsAt);
+      setQuestionEndsAt(stateData.session.questionEndsAt);
 
       if (leaderboardData.clubs) {
         setClubScores({
@@ -75,9 +80,9 @@ export default function DisplayPage() {
     };
   }, []);
 
-  // 3s Countdown tick
+  // 3s Appearing Countdown tick
   useEffect(() => {
-    if (!countdownEndsAt) {
+    if (!countdownEndsAt || status !== "COUNTDOWN") {
       setCountdownRemaining(null);
       return;
     }
@@ -95,7 +100,23 @@ export default function DisplayPage() {
     tick();
     const timer = setInterval(tick, 100);
     return () => clearInterval(timer);
-  }, [countdownEndsAt]);
+  }, [countdownEndsAt, status]);
+
+  // 30s Live Question Timer tick
+  useEffect(() => {
+    if (!questionEndsAt || status !== "LIVE") {
+      setQuestionRemaining(null);
+      return;
+    }
+    const tick = () => {
+      const remainingMs = new Date(questionEndsAt).getTime() - Date.now();
+      const sec = Math.max(0, Math.ceil(remainingMs / 1000));
+      setQuestionRemaining(sec);
+    };
+    tick();
+    const timer = setInterval(tick, 200);
+    return () => clearInterval(timer);
+  }, [questionEndsAt, status]);
 
   const isStackLeading = clubScores.STACK_PUSH > clubScores.IT_INNOVATORS;
   const isInnovatorsLeading = clubScores.IT_INNOVATORS > clubScores.STACK_PUSH;
@@ -109,7 +130,7 @@ export default function DisplayPage() {
             {countdownRemaining}
           </div>
           <div className="countdown-label" style={{ fontSize: "2.5rem" }}>
-            NEXT QUESTION STARTING...
+            ⚡ READY FOR BATTLE — QUESTION {question?.questionNumber || 1}! ⚡
           </div>
         </div>
       )}
@@ -128,7 +149,11 @@ export default function DisplayPage() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-              {status === "LIVE" && <span className="badge badge-live" style={{ fontSize: "1rem", padding: "6px 16px" }}><span className="pulse-dot" /> LIVE</span>}
+              {status === "LIVE" && (
+                <span className="badge badge-live" style={{ fontSize: "1.1rem", padding: "6px 18px", background: "rgba(239, 68, 68, 0.2)", border: "1.5px solid #ef4444", color: "#f87171" }}>
+                  <span className="pulse-dot" /> ⏱️ {questionRemaining !== null ? `${questionRemaining}s` : "LIVE"}
+                </span>
+              )}
               {status === "LOCKED" && <span className="badge badge-locked" style={{ fontSize: "1rem", padding: "6px 16px" }}>LOCKED</span>}
               {status === "REVEALED" && <span className="badge badge-revealed" style={{ fontSize: "1rem", padding: "6px 16px" }}>ANSWER REVEALED</span>}
               {status === "WAITING" && <span className="badge badge-waiting" style={{ fontSize: "1rem", padding: "6px 16px" }}>WAITING FOR HOST</span>}
@@ -139,7 +164,21 @@ export default function DisplayPage() {
           {/* Question State Display */}
           {question && (status === "LIVE" || status === "LOCKED" || status === "REVEALED") ? (
             <div>
-              <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "24px" }}>
+              {/* 30s Big Stage Timer Bar */}
+              {status === "LIVE" && questionRemaining !== null && (
+                <div style={{ marginTop: "16px", background: "rgba(255,255,255,0.08)", borderRadius: "999px", height: "10px", overflow: "hidden" }}>
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(100, Math.max(0, (questionRemaining / 30) * 100))}%`,
+                      background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
+                      transition: "width 0.2s linear",
+                    }}
+                  />
+                </div>
+              )}
+
+              <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
                 QUESTION {question.questionNumber} OF 100
               </div>
               <div className="projector-question-text">
@@ -176,12 +215,16 @@ export default function DisplayPage() {
               </div>
             </div>
           ) : (
-            <div style={{ textAlign: "center", padding: "100px 20px" }}>
-              <div style={{ fontSize: "5rem", marginBottom: "16px" }}>🎮</div>
-              <h1 style={{ fontSize: "3rem", fontWeight: 900, letterSpacing: "-1px" }}>
-                {status === "FINISHED" ? "QUIZ BATTLE FINISHED!" : "GET READY FOR THE NEXT QUESTION"}
+            <div style={{ textAlign: "center", padding: "80px 20px" }}>
+              <img
+                src="/battle-hero.jpg"
+                alt="Battle Logo"
+                style={{ width: "160px", height: "160px", objectFit: "cover", borderRadius: "50%", margin: "0 auto 20px", border: "3px solid #3b82f6", boxShadow: "0 0 35px rgba(59, 130, 246, 0.5)" }}
+              />
+              <h1 style={{ fontSize: "2.8rem", fontWeight: 900, letterSpacing: "-1px" }}>
+                {status === "FINISHED" ? "QUIZ BATTLE FINISHED!" : "GET READY FOR THE NEXT BATTLE QUESTION"}
               </h1>
-              <p style={{ fontSize: "1.4rem", color: "var(--text-muted)", marginTop: "12px" }}>
+              <p style={{ fontSize: "1.3rem", color: "var(--text-muted)", marginTop: "12px" }}>
                 Host will launch the 3-second countdown shortly
               </p>
             </div>
