@@ -1,16 +1,14 @@
 import { io } from "socket.io-client";
 
-// Connect to window.location.origin in production, or localhost in dev
-const socketUrl =
-  typeof window !== "undefined"
-    ? window.location.hostname === "localhost"
-      ? "http://localhost:3000"
-      : window.location.origin
-    : "";
+const isLocalhost =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+
+const socketUrl = isLocalhost ? "http://localhost:3000" : "";
 
 export const socket = io(socketUrl, {
   transports: ["websocket", "polling"],
-  reconnectionAttempts: 3,
-  timeout: 3000,
-  autoConnect: true,
+  reconnectionAttempts: 1,
+  timeout: 2000,
+  autoConnect: isLocalhost,
 });
