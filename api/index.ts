@@ -1878,7 +1878,39 @@ r.get("/quiz-state", async (_req, res) => {
 r.get("/leaderboard", async (_req, res) => {
   const s = await getClubScore("STACK_PUSH");
   const i = await getClubScore("IT_INNOVATORS");
-  res.json({ clubs: [{ name: "STACK_PUSH", score: s }, { name: "IT_INNOVATORS", score: i }] });
+
+  // Top 3 Students of All Time
+  const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
+  const participants = parseHGetAll(rawMap);
+  const topStudents = [...participants]
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.correctCount || 0) - (a.correctCount || 0))
+    .slice(0, 3)
+    .map((p, idx) => ({
+      rank: idx + 1,
+      id: p.id,
+      name: p.name,
+      club: p.club,
+      score: p.score || 0,
+      correctCount: p.correctCount || 0,
+    }));
+
+  const state = await getState();
+  let fastestTap = null;
+  const rawFastest = (await redis.get<string>(`fastest:${state.currentQuestionId}`)) || (await redis.get<string>("fastest:latest"));
+  if (rawFastest) {
+    try {
+      fastestTap = typeof rawFastest === "string" ? JSON.parse(rawFastest) : rawFastest;
+    } catch (_) {}
+  }
+
+  res.json({
+    clubs: [
+      { name: "STACK_PUSH", score: s },
+      { name: "IT_INNOVATORS", score: i },
+    ],
+    topStudents,
+    fastestTap,
+  });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -1958,6 +1990,30 @@ r.post("/questions/submit", async (req, res) => {
     participant.attemptCount = (participant.attemptCount || 0) + 1;
     await saveParticipant(participant);
     await addClubScore(participant.club, pointsAwarded);
+
+    // Track fastest correct tap for question
+    if (isCorrect) {
+      const fastestKey = `fastest:${currentQ.id}`;
+      const rawCurrent = await redis.get<string>(fastestKey);
+      let currentFastest: any = null;
+      if (rawCurrent) {
+        try {
+          currentFastest = typeof rawCurrent === "string" ? JSON.parse(rawCurrent) : rawCurrent;
+        } catch (_) {}
+      }
+      if (!currentFastest || sub.responseTimeMs < currentFastest.responseTimeMs) {
+        const fastestObj = {
+          participantName: participant.name,
+          club: participant.club,
+          responseTimeMs: sub.responseTimeMs,
+          responseTimeSec: (sub.responseTimeMs / 1000).toFixed(2),
+          questionNumber: currentQ.questionNumber,
+          answer: a,
+        };
+        await redis.set(fastestKey, JSON.stringify(fastestObj), { ex: 86400 });
+        await redis.set("fastest:latest", JSON.stringify(fastestObj), { ex: 86400 });
+      }
+    }
 
     res.json({ ok: true, submission: sub, participantScore: participant.score });
   } catch (err: any) {

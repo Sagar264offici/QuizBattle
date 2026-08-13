@@ -384,9 +384,10 @@ export default function StudentPage() {
                   alt="Quiz Battle Arena"
                   style={{
                     width: "100%",
-                    maxHeight: "220px",
-                    objectFit: "cover",
+                    maxHeight: "280px",
+                    objectFit: "contain",
                     display: "block",
+                    background: "rgba(0,0,0,0.3)",
                   }}
                 />
                 <div
