@@ -1731,19 +1731,29 @@ r.get("/admin/summary", requireAdmin, async (_req, res) => {
   const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
   const tokens = Array.isArray(rawTokens) ? rawTokens : [];
 
-  const participants: any[] = [];
-  const currentSubmissions: any[] = [];
+  const participants: any[] = (
+    await Promise.all(
+      tokens.map(async (tok) => {
+        try {
+          return await getParticipant(tok);
+        } catch (_) {
+          return null;
+        }
+      })
+    )
+  ).filter(Boolean);
 
-  for (const tok of tokens) {
-    const p = await getParticipant(tok);
-    if (p) {
-      participants.push(p);
-      const sub = await getSubmission(p.id, currentQ.id);
-      if (sub) {
-        currentSubmissions.push(sub);
-      }
-    }
-  }
+  const currentSubmissions: any[] = (
+    await Promise.all(
+      participants.map(async (p) => {
+        try {
+          return await getSubmission(p.id, currentQ.id);
+        } catch (_) {
+          return null;
+        }
+      })
+    )
+  ).filter(Boolean);
 
   const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
   const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
