@@ -1490,25 +1490,69 @@ async function setState(patch: Partial<QuizSessionState>): Promise<QuizSessionSt
   return next;
 }
 
+function parseHGetAll(res: any): any[] {
+  if (!res) return [];
+  if (Array.isArray(res)) {
+    const list: any[] = [];
+    for (let i = 1; i < res.length; i += 2) {
+      try {
+        const item = typeof res[i] === "string" ? JSON.parse(res[i]) : res[i];
+        if (item && item.name) list.push(item);
+      } catch (_) {}
+    }
+    return list;
+  }
+  if (typeof res === "object") {
+    return Object.values(res)
+      .map((v: any) => (typeof v === "string" ? JSON.parse(v) : v))
+      .filter((item: any) => item && item.name);
+  }
+  return [];
+}
+
 async function getParticipant(token: string) {
+  // 1. Check Hash
+  const hashRaw = await redisCommand(["HGET", "quiz:participantsMap", token]);
+  if (hashRaw) {
+    try {
+      const p = typeof hashRaw === "string" ? JSON.parse(hashRaw) : hashRaw;
+      if (p?.name) return p;
+    } catch (_) {}
+  }
+  // 2. Check Key
   const raw = await redis.get<string>(`p:${token}`);
   if (raw) {
-    try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) {}
+    try {
+      const p = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (p?.name) {
+        await redisCommand(["HSET", "quiz:participantsMap", token, JSON.stringify(p)]);
+        return p;
+      }
+    } catch (_) {}
   }
-  // Stateless fallback: decode the token itself
+  // 3. Fallback: decode token
   const d = decodeToken(token);
   if (d) {
-    const p = { id: d.id, name: d.name, club: d.club, sessionToken: token, score: 0, correctCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
-    await redis.set(`p:${token}`, JSON.stringify(p), { ex: 86400 });
-    await redisCommand(["SADD", "quiz:participantTokens", token]);
+    const p = {
+      id: d.id,
+      name: d.name,
+      club: d.club,
+      sessionToken: token,
+      score: 0,
+      correctCount: 0,
+      attemptCount: 0,
+      joinedAt: new Date().toISOString(),
+    };
+    await saveParticipant(p);
     return p;
   }
   return null;
 }
 
 async function saveParticipant(p: any) {
-  await redis.set(`p:${p.sessionToken}`, JSON.stringify(p), { ex: 86400 });
-  await redisCommand(["SADD", "quiz:participantTokens", p.sessionToken]);
+  const jsonStr = JSON.stringify(p);
+  await redis.set(`p:${p.sessionToken}`, jsonStr, { ex: 86400 });
+  await redisCommand(["HSET", "quiz:participantsMap", p.sessionToken, jsonStr]);
 }
 
 async function getSubmission(pid: number, qid: number) {
@@ -1727,21 +1771,25 @@ r.get("/admin/summary", requireAdmin, async (_req, res) => {
   const stackScore = await getClubScore("STACK_PUSH");
   const innovScore = await getClubScore("IT_INNOVATORS");
 
-  // Get all registered participant tokens
-  const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
-  const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+  // Get all registered participants from Hash (with fallback to set)
+  const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
+  let participants: any[] = parseHGetAll(rawMap);
 
-  const participants: any[] = (
-    await Promise.all(
-      tokens.map(async (tok) => {
-        try {
-          return await getParticipant(tok);
-        } catch (_) {
-          return null;
-        }
-      })
-    )
-  ).filter(Boolean);
+  if (participants.length === 0) {
+    const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
+    const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+    participants = (
+      await Promise.all(
+        tokens.map(async (tok) => {
+          try {
+            return await getParticipant(tok);
+          } catch (_) {
+            return null;
+          }
+        })
+      )
+    ).filter((p: any) => p && p.name);
+  }
 
   const currentSubmissions: any[] = (
     await Promise.all(
