@@ -1790,9 +1790,9 @@ r.get("/debug-summary", async (_req, res) => {
   const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
   const participants = parseHGetAll(rawMap);
   res.json({
-    rawMapLength: Array.isArray(rawMap) ? rawMap.length : typeof rawMap,
+    rawMap,
     participantsLength: participants.length,
-    sample: participants.slice(0, 3),
+    participants,
   });
 });
 
