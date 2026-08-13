@@ -44,7 +44,20 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+
+// Robust body parsing handling both standard Express and Vercel serverless pre-parsed bodies
+app.use((req, res, next) => {
+  if (typeof req.body === "string" && req.body) {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch (_) {}
+    return next();
+  }
+  if (req.body && typeof req.body === "object") {
+    return next();
+  }
+  express.json()(req, res, next);
+});
 app.use(
   session({
     secret: config.sessionSecret,

@@ -36,7 +36,7 @@ export default function QuizPage() {
     socket.on("quiz:state", (state) => {
       setStatus(state.status ?? "WAITING");
       if (state.currentQuestionId) {
-        void fetchJson(`/api/quiz-state`).then((payload) => {
+        void fetchJson<any>(`/api/quiz-state`).then((payload) => {
           setQuestion(payload.currentQuestion);
         });
       }
