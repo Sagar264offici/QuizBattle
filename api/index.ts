@@ -19,9 +19,9 @@ import { evaluateSubmission, isValidClub } from "../server/src/lib/quizLogic.js"
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 const HAS_REDIS = !!(REDIS_URL && REDIS_TOKEN);
-const REQUIRE_REDIS = process.env.VERCEL === "1" || process.env.VERCEL === "true";
+const USE_TEST_STORE = process.env.NODE_ENV === "test" || !!process.env.VITEST;
 
-// In-memory fallback for local development or if Redis env vars are missing
+// Tests run without an external service. Real local and Vercel runs always use Redis.
 const memStore: Record<string, string> = {};
 
 class StorageError extends Error {
@@ -35,9 +35,7 @@ class StorageError extends Error {
  * process memory: a successful request must mean the state was persisted. */
 async function redisCommand<T>(command: Array<string | number>): Promise<T> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) {
-      throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
-    }
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     return undefined as T;
   }
 
@@ -61,7 +59,7 @@ async function redisCommand<T>(command: Array<string | number>): Promise<T> {
 
 async function redisGet(key: string): Promise<string | null> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     return memStore[key] ?? null;
   }
   return redisCommand<string | null>(["GET", key]);
@@ -69,7 +67,7 @@ async function redisGet(key: string): Promise<string | null> {
 
 async function redisSet(key: string, value: string, exSeconds?: number): Promise<void> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     memStore[key] = value;
     return;
   }
@@ -78,7 +76,7 @@ async function redisSet(key: string, value: string, exSeconds?: number): Promise
 
 async function redisDel(key: string): Promise<void> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     delete memStore[key];
     return;
   }
@@ -87,7 +85,7 @@ async function redisDel(key: string): Promise<void> {
 
 async function redisIncr(key: string): Promise<number> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     const next = (Number(memStore[key]) || 0) + 1;
     memStore[key] = String(next);
     return next;
@@ -97,7 +95,7 @@ async function redisIncr(key: string): Promise<number> {
 
 async function redisIncrBy(key: string, amount: number): Promise<number> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     const next = (Number(memStore[key]) || 0) + amount;
     memStore[key] = String(next);
     return next;
@@ -107,7 +105,7 @@ async function redisIncrBy(key: string, amount: number): Promise<number> {
 
 async function redisSetNx(key: string, value: string, exSeconds: number): Promise<boolean> {
   if (!HAS_REDIS) {
-    if (REQUIRE_REDIS) throw new StorageError("Quiz storage is not configured. Add the Upstash Redis environment variables in Vercel.");
+    if (!USE_TEST_STORE) throw new StorageError("Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
     if (memStore[key]) return false;
     memStore[key] = value;
     return true;
@@ -228,6 +226,38 @@ async function saveSubmission(sub: any): Promise<void> {
   await redisSAdd("quiz:submissionKeys", `${sub.participantId}:${sub.questionId}`);
 }
 
+function toStudentSubmission(submission: any, revealed: boolean) {
+  if (!submission) return null;
+  const { isCorrect: _isCorrect, pointsAwarded: _pointsAwarded, scoredAt: _scoredAt, ...safeSubmission } = submission;
+  return revealed ? submission : safeSubmission;
+}
+
+async function scoreRevealedQuestion(questionId: number): Promise<void> {
+  const submissionKeys = await redisSMembers("quiz:submissionKeys");
+  const questionSuffix = `:${questionId}`;
+
+  for (const key of submissionKeys) {
+    if (!key.endsWith(questionSuffix)) continue;
+    const [participantId] = key.split(":");
+    const submission = await getSubmission(Number(participantId), questionId);
+    if (!submission || submission.scoredAt) continue;
+
+    const participant = await getParticipant(submission.sessionToken);
+    if (!participant) continue;
+
+    const awarded = submission.isCorrect ? submission.pointsAwarded : 0;
+    participant.score = (participant.score || 0) + awarded;
+    participant.correctCount = (participant.correctCount || 0) + (submission.isCorrect ? 1 : 0);
+    participant.attemptCount = (participant.attemptCount || 0) + 1;
+
+    await saveParticipant(participant);
+    if (awarded) await incrClubScore(participant.club, awarded);
+
+    submission.scoredAt = new Date().toISOString();
+    await saveSubmission(submission);
+  }
+}
+
 // Club scores: stored as simple integers
 async function getClubScore(club: string): Promise<number> {
   const raw = await redisGet(`score:${club}`);
@@ -262,7 +292,7 @@ async function clearAllParticipants(): Promise<void> {
 
 // ── Express App ───────────────────────────────────────────────────────────────
 
-const app = express();
+export const app = express();
 
 app.use(cors({ origin: true, credentials: true }));
 
@@ -276,12 +306,11 @@ app.use((req, res, next) => {
   express.json()(req, res, next);
 });
 
-// A Vercel function may be served by any instance. Running it without Redis
-// would make different students see different quizzes, so fail clearly instead.
+// Any real process without Redis would serve inconsistent quiz state, so fail clearly.
 app.use((_req, res, next) => {
-  if (REQUIRE_REDIS && !HAS_REDIS) {
+  if (!HAS_REDIS && !USE_TEST_STORE) {
     return res.status(503).json({
-      error: "Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel.",
+      error: "Quiz storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
     });
   }
   next();
@@ -352,7 +381,17 @@ router.post("/admin/lock-answers", requireAdmin, async (_req, res) => {
 
 router.post("/admin/reveal-answer", requireAdmin, async (_req, res) => {
   const current = await getSessionState();
+  if (current.status === "REVEALED") {
+    return res.json({ ok: true, state: current, correctAnswer: current.correctAnswer });
+  }
+  if (current.status !== "LIVE" && current.status !== "LOCKED") {
+    return res.status(400).json({ error: "A live or locked question is required before revealing an answer" });
+  }
+
   const q = getQuestion(current.currentQuestionId);
+  // Lock first, then award server-side exactly once at the reveal point.
+  if (current.status === "LIVE") await setSessionState({ status: "LOCKED" });
+  await scoreRevealedQuestion(q.id);
   const state = await setSessionState({
     status: "REVEALED",
     correctAnswer: q ? q.correctAnswer : null,
@@ -546,7 +585,7 @@ router.get("/participants/session", async (req, res) => {
       sessionToken: participant.sessionToken,
     },
     hasSubmitted: !!submission,
-    userSubmission: submission,
+    userSubmission: toStudentSubmission(submission, state.status === "REVEALED"),
     currentQuestion: state.status === "LIVE" || state.status === "LOCKED" || state.status === "REVEALED"
       ? toPublicQuestion(currentQ)
       : null,
@@ -597,6 +636,7 @@ router.post("/questions/submit", async (req, res) => {
     const submission = {
       id: Date.now(),
       participantId: participant.id,
+      sessionToken: participant.sessionToken,
       participantName: participant.name,
       club: participant.club,
       questionId: currentQ.id,
@@ -617,21 +657,9 @@ router.post("/questions/submit", async (req, res) => {
     if (!accepted) return res.status(409).json({ error: "Already submitted for this question" });
     await redisSAdd("quiz:submissionKeys", `${participant.id}:${currentQ.id}`);
 
-    // Update participant score
-    participant.score = (participant.score || 0) + pointsAwarded;
-    participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
-    participant.attemptCount = (participant.attemptCount || 0) + 1;
-    await saveParticipant(participant);
-
-    // Update club score
-    await incrClubScore(participant.club, pointsAwarded);
-
     res.json({
       ok: true,
-      submission,
-      participantScore: participant.score,
-      isCorrect,
-      pointsAwarded,
+      submission: toStudentSubmission(submission, false),
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Submission failed" });

@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import http from "node:http";
 import { app } from "../server/src/index";
-import { quizStore } from "../server/src/services/quizStore";
 
 describe("Express App API Routes", () => {
   let server: http.Server;
@@ -22,8 +21,17 @@ describe("Express App API Routes", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  beforeEach(() => {
-    quizStore.clearAllFresh();
+  const adminHeaders = {
+    "Content-Type": "application/json",
+    "x-admin-password": "MadeBySagar",
+  };
+
+  beforeEach(async () => {
+    await fetch(`${baseUrl}/api/admin/reset-all-fresh`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: "{}",
+    });
   });
 
   it("GET /api/health returns ok", async () => {
@@ -55,7 +63,12 @@ describe("Express App API Routes", () => {
     const regData = await regRes.json();
     const token = regData.participant.sessionToken;
 
-    quizStore.startQuestionDirect(1);
+    const startRes = await fetch(`${baseUrl}/api/admin/start-question`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ questionNumber: 1 }),
+    });
+    expect(startRes.status).toBe(200);
 
     const subRes = await fetch(`${baseUrl}/api/questions/submit`, {
       method: "POST",
@@ -71,7 +84,8 @@ describe("Express App API Routes", () => {
     expect(subRes.status).toBe(200);
     expect(subData.ok).toBe(true);
     expect(subData.submission.answer).toBe("A");
-    expect(subData.participantScore).toBe(1);
+    expect(subData.isCorrect).toBeUndefined();
+    expect(subData.pointsAwarded).toBeUndefined();
   });
 
   it("Admin endpoints: start countdown, lock, reveal, and 1-click test reset", async () => {
@@ -88,11 +102,8 @@ describe("Express App API Routes", () => {
     // 2. Start Countdown
     const countRes = await fetch(`${baseUrl}/api/admin/start-countdown`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-password": "MadeBySagar",
-      },
-      body: JSON.stringify({ questionId: 1, seconds: 3 }),
+      headers: adminHeaders,
+      body: JSON.stringify({ questionNumber: 1, seconds: 3 }),
     });
     const countData = await countRes.json();
     expect(countRes.status).toBe(200);
@@ -101,10 +112,7 @@ describe("Express App API Routes", () => {
     // 3. 1-Click Test Reset
     const resetRes = await fetch(`${baseUrl}/api/admin/reset-scores`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-password": "MadeBySagar",
-      },
+      headers: adminHeaders,
     });
     const resetData = await resetRes.json();
     expect(resetRes.status).toBe(200);

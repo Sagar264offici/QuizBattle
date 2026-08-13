@@ -6,12 +6,12 @@
   "scripts": {
     "test": "vitest run",
     "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
-    "server:dev": "tsx watch server/src/index.ts",
+    "server:dev": "tsx watch api/local.ts",
     "client:dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build && tsc -p server/tsconfig.json",
     "server:build": "tsc -p server/tsconfig.json",
     "seed": "tsx server/src/scripts/seedQuiz.ts",
-    "start": "node server/dist/index.js"
+    "start": "node server/dist/server/src/index.js"
   },
   "keywords": [],
   "author": "",
@@ -43,13 +43,14 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^6.0.5",
     "concurrently": "^10.0.4",
     "jsdom": "^29.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tsx": "^4.23.12",
-    "typescript": "^7.0.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
   }

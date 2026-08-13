@@ -314,7 +314,7 @@ export default function StudentPage() {
       const res = await fetchJson<{
         ok: boolean;
         submission: any;
-        participantScore: number;
+        participantScore?: number;
       }>("/api/questions/submit", {
         method: "POST",
         body: JSON.stringify({
