@@ -1,0 +1,1198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QuizBattle Platform - User Guide</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        background: white;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: white;
+      }
+
+      header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px 20px;
+        text-align: center;
+        border-radius: 8px;
+        margin-bottom: 40px;
+      }
+
+      header h1 {
+        font-size: 42px;
+        margin-bottom: 10px;
+      }
+
+      header p {
+        font-size: 18px;
+        opacity: 0.95;
+      }
+
+      .toc {
+        background: #f0f4ff;
+        padding: 20px;
+        border-left: 4px solid #667eea;
+        margin-bottom: 40px;
+        border-radius: 4px;
+      }
+
+      .toc h2 {
+        color: #667eea;
+        margin-bottom: 15px;
+        font-size: 20px;
+      }
+
+      .toc ol {
+        margin-left: 20px;
+      }
+
+      .toc li {
+        margin-bottom: 8px;
+        color: #555;
+      }
+
+      section {
+        margin-bottom: 50px;
+        page-break-inside: avoid;
+      }
+
+      h2 {
+        color: #667eea;
+        font-size: 28px;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #667eea;
+      }
+
+      h3 {
+        color: #555;
+        font-size: 20px;
+        margin-top: 25px;
+        margin-bottom: 12px;
+      }
+
+      .step {
+        background: #f9f9f9;
+        padding: 15px;
+        margin: 15px 0;
+        border-left: 4px solid #667eea;
+        border-radius: 4px;
+      }
+
+      .step-number {
+        display: inline-block;
+        background: #667eea;
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 30px;
+        font-weight: bold;
+        margin-right: 10px;
+      }
+
+      .step h4 {
+        display: inline-block;
+        color: #333;
+        font-size: 16px;
+        margin: 0;
+      }
+
+      .step p {
+        margin-left: 40px;
+        margin-top: 8px;
+        color: #666;
+      }
+
+      .feature-box {
+        background: #f0f4ff;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 6px;
+        border: 1px solid #dde5ff;
+      }
+
+      .feature-box strong {
+        color: #667eea;
+      }
+
+      .info-box {
+        background: #e8f5e9;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 6px;
+        border-left: 4px solid #4caf50;
+        color: #2e7d32;
+      }
+
+      .warning-box {
+        background: #fff3e0;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 6px;
+        border-left: 4px solid #ff9800;
+        color: #e65100;
+      }
+
+      .table-wrapper {
+        overflow-x: auto;
+        margin: 20px 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: white;
+      }
+
+      th {
+        background: #667eea;
+        color: white;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+      }
+
+      td {
+        padding: 12px;
+        border-bottom: 1px solid #ddd;
+      }
+
+      tr:nth-child(even) {
+        background: #f9f9f9;
+      }
+
+      .button-example {
+        display: inline-block;
+        background: #667eea;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 4px;
+        margin: 5px 0;
+        font-size: 14px;
+      }
+
+      .screenshots {
+        margin: 20px 0;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 6px;
+      }
+
+      .page-break {
+        page-break-after: always;
+        height: 20px;
+      }
+
+      footer {
+        text-align: center;
+        color: #999;
+        margin-top: 50px;
+        padding-top: 20px;
+        border-top: 1px solid #ddd;
+        font-size: 12px;
+      }
+
+      .keyboard-key {
+        display: inline-block;
+        background: #333;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+        margin: 0 2px;
+      }
+
+      ul {
+        margin-left: 20px;
+        margin-bottom: 15px;
+      }
+
+      li {
+        margin-bottom: 8px;
+        color: #555;
+      }
+
+      .emoji {
+        font-size: 20px;
+        margin-right: 8px;
+      }
+
+      @media print {
+        body {
+          background: white;
+        }
+        section {
+          page-break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Header -->
+      <header>
+        <h1>🎯 QuizBattle Platform</h1>
+        <p>Complete User Guide for IT Club Quiz Competition</p>
+      </header>
+
+      <!-- Table of Contents -->
+      <div class="toc">
+        <h2>📋 Table of Contents</h2>
+        <ol>
+          <li>Getting Started & System Overview</li>
+          <li>For Quiz Participants</li>
+          <li>For Quiz Administrators</li>
+          <li>For Display Screen Operators</li>
+          <li>Quiz Flow Walkthrough</li>
+          <li>Troubleshooting & FAQ</li>
+        </ol>
+      </div>
+
+      <!-- Section 1: Getting Started -->
+      <section>
+        <h2>📱 1. Getting Started & System Overview</h2>
+
+        <h3>What is QuizBattle?</h3>
+        <p>
+          QuizBattle is a real-time quiz competition platform designed for
+          college IT clubs. It supports:
+        </p>
+        <ul>
+          <li>
+            <strong>Two competing clubs</strong>: STACK_PUSH and IT_INNOVATORS
+          </li>
+          <li><strong>100 questions</strong> across 5 difficulty rounds</li>
+          <li>
+            <strong>Real-time scoring</strong> with server-side validation
+          </li>
+          <li><strong>Live leaderboard</strong> visible to all participants</li>
+          <li><strong>Projector display</strong> for audience viewing</li>
+        </ul>
+
+        <h3>System Requirements</h3>
+        <div class="info-box">
+          <strong>📌 Device Requirements:</strong>
+          <ul>
+            <li>Modern web browser (Chrome, Firefox, Safari, Edge)</li>
+            <li>Internet connection (WiFi recommended)</li>
+            <li>Desktop, tablet, or smartphone compatible</li>
+            <li>Screen resolution: 1024×768 or higher recommended</li>
+          </ul>
+        </div>
+
+        <h3>Accessing QuizBattle</h3>
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Open Web Browser</h4>
+          <p>Use any modern web browser (Chrome, Firefox, Safari, or Edge)</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Navigate to Platform</h4>
+          <p>Enter the event's QuizBattle URL provided by the organizer</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Choose Your Role</h4>
+          <p>
+            You'll see three options: Join Quiz, Admin Dashboard, or Display
+            Screen
+          </p>
+        </div>
+      </section>
+
+      <!-- Section 2: For Participants -->
+      <section>
+        <h2>👥 2. For Quiz Participants</h2>
+
+        <h3>Registration Steps</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Click "JOIN QUIZ"</h4>
+          <p>From the home page, select the "Join Quiz" option</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Select Your Club</h4>
+          <p>Choose between:</p>
+          <div style="margin-left: 40px">
+            <p>
+              <strong>🔵 STACK_PUSH</strong> - Club for backend & systems
+              programming
+            </p>
+            <p>
+              <strong>🟢 IT_INNOVATORS</strong> - Club for innovation & emerging
+              tech
+            </p>
+          </div>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Enter Your Name</h4>
+          <p>Type your full name in the text field (e.g., "John Doe")</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">4</span>
+          <h4>Click "REGISTER"</h4>
+          <p>
+            Submit your registration. You'll be assigned a unique session ID.
+          </p>
+        </div>
+
+        <h3>During the Quiz</h3>
+
+        <div class="feature-box">
+          <strong>✨ Quiz Page Layout:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>
+              <strong>Left side</strong>: Question text and 4 answer options
+            </li>
+            <li>
+              <strong>Right side</strong>: Your current score and live
+              leaderboard
+            </li>
+            <li><strong>Top</strong>: Connection status indicator</li>
+            <li><strong>Bottom</strong>: Submit button</li>
+          </ul>
+        </div>
+
+        <h3>Answering Questions</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Wait for "LIVE" Status</h4>
+          <p>
+            The question page will show "LIVE" when admin has started a question
+          </p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Read the Question</h4>
+          <p>Carefully read the question text displayed in large font</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Select Your Answer</h4>
+          <p>Click one of the four answer buttons: A, B, C, or D</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">4</span>
+          <h4>Click "SUBMIT"</h4>
+          <p>Click the "SUBMIT ANSWER" button to lock in your response</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">5</span>
+          <h4>Wait for Reveal</h4>
+          <p>
+            After all answers are submitted, the correct answer will be revealed
+          </p>
+        </div>
+
+        <div class="warning-box">
+          <strong>⚠️ Important Notes:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>You can only submit ONE answer per question</li>
+            <li>Once submitted, you cannot change your answer</li>
+            <li>
+              Submit as quickly as possible - faster correct answers earn bonus
+              points
+            </li>
+            <li>Stay connected - if you disconnect, you may miss questions</li>
+          </ul>
+        </div>
+
+        <h3>Understanding Your Score</h3>
+
+        <div class="feature-box">
+          <strong>📊 How Scoring Works:</strong>
+          <div style="margin-left: 20px; margin-top: 10px">
+            <p>
+              <strong>Correct Answer</strong>: You earn the full points for that
+              question
+            </p>
+            <p>
+              <strong>Speed Bonus</strong>: Faster correct answers may earn
+              bonus points
+            </p>
+            <p><strong>Wrong Answer</strong>: 0 points awarded</p>
+            <p>
+              <strong>Questions vary by round</strong>: Earlier rounds = 1
+              point, Later rounds = 2-3 points
+            </p>
+          </div>
+        </div>
+
+        <div class="info-box">
+          <strong>📈 Live Leaderboard:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Your personal score appears on the right side</li>
+            <li>
+              Club leaderboard shows both STACK_PUSH and IT_INNOVATORS scores
+            </li>
+            <li>Updates after each submission</li>
+            <li>Leading club is indicated with a crown emoji 👑</li>
+          </ul>
+        </div>
+
+        <h3>Connection Status</h3>
+        <div class="table-wrapper">
+          <table>
+            <tr>
+              <th>Status</th>
+              <th>Meaning</th>
+              <th>Action Required</th>
+            </tr>
+            <tr>
+              <td><strong style="color: #4caf50">🟢 ONLINE</strong></td>
+              <td>Connected to quiz server</td>
+              <td>None - you're ready to answer</td>
+            </tr>
+            <tr>
+              <td><strong style="color: #f44336">🔴 OFFLINE</strong></td>
+              <td>Disconnected from server</td>
+              <td>Refresh page or check WiFi connection</td>
+            </tr>
+            <tr>
+              <td><strong style="color: #ff9800">🟡 WAITING</strong></td>
+              <td>No active question</td>
+              <td>Wait for admin to start next question</td>
+            </tr>
+          </table>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Section 3: For Administrators -->
+      <section>
+        <h2>⚙️ 3. For Quiz Administrators</h2>
+
+        <h3>Admin Login</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Navigate to Admin Dashboard</h4>
+          <p>Click "ADMIN DASHBOARD" from the home page</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Enter Admin Password</h4>
+          <p>Type the event's admin password in the password field</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Click "LOGIN"</h4>
+          <p>Submit your credentials to access the admin panel</p>
+        </div>
+
+        <div class="info-box">
+          <strong>🔐 Security Note:</strong>
+          <p>
+            Your admin session is secure and encrypted. Log out before leaving
+            the system.
+          </p>
+        </div>
+
+        <h3>Admin Dashboard Overview</h3>
+
+        <div class="feature-box">
+          <strong>🎛️ Dashboard Sections:</strong>
+          <div style="margin-left: 20px; margin-top: 10px">
+            <p>
+              <strong>Metrics Panel</strong> (top): Shows quiz status,
+              registered participants, club counts
+            </p>
+            <p><strong>Control Buttons</strong> (middle): Manage quiz flow</p>
+            <p>
+              <strong>Question Navigator</strong> (bottom-left): Grid of all 100
+              questions with round filters
+            </p>
+            <p>
+              <strong>Leaderboard</strong> (right): Live club scores update in
+              real-time
+            </p>
+          </div>
+        </div>
+
+        <h3>Key Metrics Explained</h3>
+        <div class="table-wrapper">
+          <table>
+            <tr>
+              <th>Metric</th>
+              <th>What It Shows</th>
+            </tr>
+            <tr>
+              <td><strong>Status</strong></td>
+              <td>
+                Current quiz state (WAITING, LIVE, LOCKED, REVEALED, FINISHED)
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Round</strong></td>
+              <td>Current round number (1-5)</td>
+            </tr>
+            <tr>
+              <td><strong>Question</strong></td>
+              <td>Current question number (1-100)</td>
+            </tr>
+            <tr>
+              <td><strong>Registered</strong></td>
+              <td>Total number of participants</td>
+            </tr>
+            <tr>
+              <td><strong>STACK_PUSH / IT_INNOVATORS</strong></td>
+              <td>Number of participants per club</td>
+            </tr>
+          </table>
+        </div>
+
+        <h3>Running a Question (Step-by-Step)</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Select a Question</h4>
+          <p>
+            Use the question navigator grid at bottom-left. Click a question
+            number or use Round filters to find your question.
+          </p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Preview Question</h4>
+          <p>
+            Below the grid, you'll see the selected question text and points
+            value
+          </p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Click "START QUESTION"</h4>
+          <p>
+            This broadcasts the question to all participants and changes status
+            to "LIVE"
+          </p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">4</span>
+          <h4>Wait for Participants</h4>
+          <p>
+            Participants have 30-60 seconds to read and answer (depends on
+            question difficulty)
+          </p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">5</span>
+          <h4>Click "LOCK ANSWERS"</h4>
+          <p>This closes answer submission and prevents new submissions</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">6</span>
+          <h4>Click "REVEAL ANSWER"</h4>
+          <p>
+            Shows the correct answer on all screens. Scores are calculated
+            automatically.
+          </p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">7</span>
+          <h4>Click "NEXT QUESTION"</h4>
+          <p>Advances to the next question. Status returns to "WAITING"</p>
+        </div>
+
+        <h3>Control Buttons Reference</h3>
+        <div class="table-wrapper">
+          <table>
+            <tr>
+              <th>Button</th>
+              <th>Function</th>
+              <th>When to Use</th>
+            </tr>
+            <tr>
+              <td><strong>START QUESTION</strong></td>
+              <td>Begins question timer, shows to all participants</td>
+              <td>When you want to activate the current question</td>
+            </tr>
+            <tr>
+              <td><strong>LOCK ANSWERS</strong></td>
+              <td>Stops accepting new answers</td>
+              <td>After time's up, before revealing answer</td>
+            </tr>
+            <tr>
+              <td><strong>REVEAL ANSWER</strong></td>
+              <td>Shows correct answer, calculates scores</td>
+              <td>After lockdown, to show solution</td>
+            </tr>
+            <tr>
+              <td><strong>NEXT QUESTION</strong></td>
+              <td>Advances to next question</td>
+              <td>After revealing answer, to continue</td>
+            </tr>
+            <tr>
+              <td><strong>RESET CURRENT</strong></td>
+              <td>Restarts the current question</td>
+              <td>If question was started by mistake</td>
+            </tr>
+            <tr>
+              <td><strong>RESET QUIZ</strong></td>
+              <td>Clears all progress, starts over</td>
+              <td>For retrying the entire event</td>
+            </tr>
+            <tr>
+              <td><strong>END QUIZ</strong></td>
+              <td>Finalizes results, stops all activity</td>
+              <td>At the end of the competition</td>
+            </tr>
+          </table>
+        </div>
+
+        <h3>Question Navigator Guide</h3>
+
+        <div class="feature-box">
+          <strong>🎯 How to Use Question Navigator:</strong>
+          <div style="margin-left: 20px; margin-top: 10px">
+            <p>
+              <strong>Round Filters:</strong> Click "All", "Round 1", "Round 2",
+              etc. to filter questions
+            </p>
+            <p>
+              <strong>Grid Buttons:</strong> Each button shows a question number
+              (1-100)
+            </p>
+            <p><strong>Selection:</strong> Click any question to select it</p>
+            <p>
+              <strong>Scroll:</strong> Grid is scrollable if too many questions
+              shown
+            </p>
+            <p>
+              <strong>Preview:</strong> Selected question appears below with
+              text and points
+            </p>
+          </div>
+        </div>
+
+        <h3>Monitoring Live Leaderboard</h3>
+
+        <div class="info-box">
+          <strong>📊 Leaderboard on Admin Page:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Right sidebar shows live club scores</li>
+            <li>Updates after each participant submits an answer</li>
+            <li>Leading club is marked with crown emoji 👑</li>
+            <li>Useful for checking which club is winning</li>
+            <li>Auto-refreshes every 2 seconds</li>
+          </ul>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Section 4: Display Screen Operator -->
+      <section>
+        <h2>🖥️ 4. For Display Screen Operators</h2>
+
+        <h3>Setting Up the Display Screen</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Connect Display Device</h4>
+          <p>Use a projector, large monitor, or TV for audience viewing</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Open Display Mode</h4>
+          <p>Click "DISPLAY SCREEN" from the home page</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Full Screen (Optional)</h4>
+          <p>
+            Press <span class="keyboard-key">F11</span> to enter full-screen
+            mode
+          </p>
+        </div>
+
+        <h3>Display Screen Features</h3>
+
+        <div class="feature-box">
+          <strong>✨ What's Shown on Display:</strong>
+          <div style="margin-left: 20px; margin-top: 10px">
+            <p><strong>Large Question Area</strong> (70% of screen)</p>
+            <ul style="margin-left: 20px">
+              <li>Title: "IT CLUB QUIZ"</li>
+              <li>Subtitle: "STACK.PUSH vs IT_INNOVATORS"</li>
+              <li>Question text in large, readable font</li>
+              <li>Four answer options (A, B, C, D)</li>
+            </ul>
+            <p style="margin-top: 15px">
+              <strong>Leaderboard Sidebar</strong> (30% of screen)
+            </p>
+            <ul style="margin-left: 20px">
+              <li>Real-time club scores</li>
+              <li>Leading club marked with 👑</li>
+              <li>Updates after each submission</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Display States</h3>
+        <div class="table-wrapper">
+          <table>
+            <tr>
+              <th>State</th>
+              <th>Display Shows</th>
+              <th>Meaning</th>
+            </tr>
+            <tr>
+              <td><strong>WAITING</strong></td>
+              <td>Event title + "WAITING FOR HOST"</td>
+              <td>Admin hasn't started a question yet</td>
+            </tr>
+            <tr>
+              <td><strong>LIVE</strong></td>
+              <td>Full question with all options</td>
+              <td>Participants are answering this question</td>
+            </tr>
+            <tr>
+              <td><strong>REVEALED</strong></td>
+              <td>"ANSWER REVEALED" + correct option highlighted</td>
+              <td>Correct answer is being shown</td>
+            </tr>
+            <tr>
+              <td><strong>FINISHED</strong></td>
+              <td>Quiz completion message</td>
+              <td>All questions completed, event ended</td>
+            </tr>
+          </table>
+        </div>
+
+        <h3>Operator Tips</h3>
+
+        <div class="info-box">
+          <strong>💡 Best Practices:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Test display connection before event starts</li>
+            <li>Ensure brightness/contrast is optimal for audience</li>
+            <li>Check font size is readable from audience distance</li>
+            <li>Keep display active (don't lock or sleep)</li>
+            <li>Disable screen saver if enabled</li>
+            <li>Position display so all audience can see clearly</li>
+            <li>Keep browser window at full width for display</li>
+            <li>Monitor connection stability throughout event</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Section 5: Complete Quiz Flow -->
+      <section>
+        <h2>🎬 5. Complete Quiz Flow Walkthrough</h2>
+
+        <h3>Before Event Starts</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Admin Prepares</h4>
+          <p>Admin logs in, verifies all 100 questions are loaded</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Participants Join</h4>
+          <p>Participants register with their names and club selections</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Display Screen Ready</h4>
+          <p>Operator displays the quiz screen showing "WAITING" status</p>
+        </div>
+
+        <h3>During Each Question</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Admin Selects Question</h4>
+          <p>Admin uses question navigator to select a question</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Admin Starts Question</h4>
+          <p>Clicks "START QUESTION" - question goes LIVE</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>Display Updates</h4>
+          <p>Display screen shows question with all four options</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">4</span>
+          <h4>Participants Answer</h4>
+          <p>Participants read question, select answer, click SUBMIT</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">5</span>
+          <h4>Admin Locks Answers</h4>
+          <p>After time's up, admin clicks "LOCK ANSWERS"</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">6</span>
+          <h4>Admin Reveals Answer</h4>
+          <p>Clicks "REVEAL ANSWER" - correct answer shown to all</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">7</span>
+          <h4>Scores Update</h4>
+          <p>Participants' scores update on their screens and leaderboard</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">8</span>
+          <h4>Admin Goes Next</h4>
+          <p>Clicks "NEXT QUESTION" to advance</p>
+        </div>
+
+        <h3>After All Questions</h3>
+
+        <div class="step">
+          <span class="step-number">1</span>
+          <h4>Final Standings</h4>
+          <p>After question 100, leaderboard shows final scores</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">2</span>
+          <h4>Announce Winner</h4>
+          <p>Display screen shows winning club with most points</p>
+        </div>
+
+        <div class="step">
+          <span class="step-number">3</span>
+          <h4>End Quiz</h4>
+          <p>Admin clicks "END QUIZ" to finalize results</p>
+        </div>
+
+        <h3>Timeline Example (60 Questions × 30 seconds each)</h3>
+        <div class="feature-box">
+          <strong>⏱️ Estimated Schedule:</strong>
+          <div style="margin-left: 20px; margin-top: 10px">
+            <p>00:00 - Event begins, participants register (2-5 minutes)</p>
+            <p>05:00 - Admin starts first question</p>
+            <p>05:30 - Participants answer locked, answer revealed</p>
+            <p>06:00 - Next question starts</p>
+            <p>... (repeat)</p>
+            <p>35:00 - Question 60 revealed, scores tallied</p>
+            <p>35:30 - Final leaderboard announced</p>
+            <p>36:00 - Event ends</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Section 6: Troubleshooting -->
+      <section>
+        <h2>🔧 6. Troubleshooting & FAQ</h2>
+
+        <h3>Common Participant Issues</h3>
+
+        <h3>❓ "I can't see the question"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>
+              Refresh your browser: <span class="keyboard-key">Ctrl</span> +
+              <span class="keyboard-key">R</span>
+            </li>
+            <li>Check internet connection</li>
+            <li>Wait for admin to click "START QUESTION"</li>
+            <li>Try opening in a different browser</li>
+          </ul>
+        </div>
+
+        <h3>❓ "My answer didn't submit"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Check your internet connection</li>
+            <li>
+              Verify you selected an answer (one button should be highlighted)
+            </li>
+            <li>Click "SUBMIT" button again</li>
+            <li>
+              If submit button is disabled, answer submission may be closed
+            </li>
+            <li>Refresh page and try again</li>
+          </ul>
+        </div>
+
+        <h3>❓ "Connection shows OFFLINE"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Check WiFi/internet connection</li>
+            <li>Move closer to WiFi router if signal is weak</li>
+            <li>Try connecting to different WiFi network</li>
+            <li>Restart your device</li>
+            <li>
+              Clear browser cache: <span class="keyboard-key">Ctrl</span> +
+              <span class="keyboard-key">Shift</span> +
+              <span class="keyboard-key">Delete</span>
+            </li>
+          </ul>
+        </div>
+
+        <h3>❓ "My score doesn't match what I think"</h3>
+        <div class="warning-box">
+          <strong>Explanation:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Score is calculated server-side (cannot be altered locally)</li>
+            <li>Correct answers: full points + possible speed bonus</li>
+            <li>Wrong answers: 0 points</li>
+            <li>Different rounds have different point values</li>
+            <li>Check leaderboard to see final scores after each question</li>
+          </ul>
+        </div>
+
+        <h3>Common Admin Issues</h3>
+
+        <h3>❓ "Admin login says 'Invalid password'"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Verify you're using correct password (case-sensitive)</li>
+            <li>Clear browser cookies and try again</li>
+            <li>Try incognito/private browsing mode</li>
+            <li>Contact event organizer to confirm password</li>
+          </ul>
+        </div>
+
+        <h3>❓ "Questions aren't loading in navigator"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Refresh the admin page</li>
+            <li>Check internet connection</li>
+            <li>Wait a moment for questions to load (large data set)</li>
+            <li>Try different browser</li>
+            <li>Contact system administrator</li>
+          </ul>
+        </div>
+
+        <h3>❓ "Leaderboard isn't updating"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Scores update after participants submit answers</li>
+            <li>Wait for participants to finish answering current question</li>
+            <li>Refresh admin page to manually sync</li>
+            <li>Check if participants are actually submitting answers</li>
+          </ul>
+        </div>
+
+        <h3>❓ "Display screen is frozen/not updating"</h3>
+        <div class="warning-box">
+          <strong>Solutions:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>
+              Refresh display page: <span class="keyboard-key">Ctrl</span> +
+              <span class="keyboard-key">R</span>
+            </li>
+            <li>Check internet connection to display device</li>
+            <li>Close other browser tabs using bandwidth</li>
+            <li>Restart the device</li>
+            <li>Verify admin is clicking buttons (admin controls display)</li>
+          </ul>
+        </div>
+
+        <h3>Frequently Asked Questions</h3>
+
+        <h3>❓ How many participants can join?</h3>
+        <p>
+          The system supports any number of participants. For best performance,
+          100+ participants should be tested for your specific setup.
+        </p>
+
+        <h3>❓ Can I pause the quiz?</h3>
+        <p>
+          Yes - by clicking "LOCK ANSWERS" without clicking "REVEAL ANSWER",
+          participants can't answer but quiz isn't progressing.
+        </p>
+
+        <h3>❓ What happens if I accidentally skip a question?</h3>
+        <p>
+          Click "RESET CURRENT QUESTION" to go back to the current question, or
+          use the question navigator to select any question.
+        </p>
+
+        <h3>❓ Can participants see other participants' answers?</h3>
+        <p>
+          No - each participant only sees their own score. They can see club
+          scores on the leaderboard.
+        </p>
+
+        <h3>❓ What if a participant disconnects mid-question?</h3>
+        <p>
+          They can reconnect anytime. If question was already answered by them,
+          they'll receive the score. If not answered, they can't re-answer that
+          question.
+        </p>
+
+        <h3>❓ How are ties broken?</h3>
+        <p>
+          If clubs have equal scores, they're co-champions. Speed of correct
+          answers can be used as tiebreaker if needed.
+        </p>
+
+        <h3>❓ Can I change a participant's score?</h3>
+        <p>
+          No - all scoring is automated and server-side. Scores cannot be
+          manually adjusted.
+        </p>
+
+        <h3>❓ Is the quiz data saved after it ends?</h3>
+        <p>
+          Yes - all submissions, scores, and responses are saved in the database
+          for future review.
+        </p>
+
+        <div class="info-box">
+          <strong>📞 Need More Help?</strong>
+          <ul style="margin-left: 20px; margin-top: 10px">
+            <li>Contact your event organizer or IT administrator</li>
+            <li>Check the QuizBattle documentation online</li>
+            <li>Email support team with specific issue details</li>
+          </ul>
+        </div>
+      </section>
+
+      <div class="page-break"></div>
+
+      <!-- Quick Reference Card -->
+      <section>
+        <h2>📝 Quick Reference Card</h2>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px">
+          <div class="feature-box">
+            <strong>👥 For Participants</strong>
+            <div style="margin-top: 10px; font-size: 14px">
+              <p><strong>1.</strong> Click "JOIN QUIZ"</p>
+              <p>
+                <strong>2.</strong> Select club (STACK_PUSH or IT_INNOVATORS)
+              </p>
+              <p><strong>3.</strong> Enter name</p>
+              <p><strong>4.</strong> Click "REGISTER"</p>
+              <p><strong>5.</strong> Wait for questions</p>
+              <p><strong>6.</strong> Answer when "LIVE"</p>
+              <p><strong>7.</strong> Click "SUBMIT"</p>
+              <p><strong>8.</strong> Check leaderboard</p>
+            </div>
+          </div>
+
+          <div class="feature-box">
+            <strong>⚙️ For Admins</strong>
+            <div style="margin-top: 10px; font-size: 14px">
+              <p><strong>1.</strong> Click "ADMIN DASHBOARD"</p>
+              <p><strong>2.</strong> Enter password → Login</p>
+              <p><strong>3.</strong> Select question (use grid)</p>
+              <p><strong>4.</strong> Click "START QUESTION"</p>
+              <p><strong>5.</strong> Wait ~30 sec</p>
+              <p><strong>6.</strong> Click "LOCK ANSWERS"</p>
+              <p><strong>7.</strong> Click "REVEAL ANSWER"</p>
+              <p><strong>8.</strong> Click "NEXT QUESTION"</p>
+            </div>
+          </div>
+
+          <div class="feature-box">
+            <strong>🖥️ For Display Ops</strong>
+            <div style="margin-top: 10px; font-size: 14px">
+              <p><strong>1.</strong> Click "DISPLAY SCREEN"</p>
+              <p>
+                <strong>2.</strong> Press
+                <span class="keyboard-key">F11</span> for fullscreen
+              </p>
+              <p><strong>3.</strong> Verify device projector active</p>
+              <p><strong>4.</strong> Monitor connection status</p>
+              <p><strong>5.</strong> Display auto-syncs with admin</p>
+              <p><strong>6.</strong> Stay on page during event</p>
+              <p><strong>7.</strong> Watch for updates</p>
+              <p>
+                <strong>8.</strong> Press
+                <span class="keyboard-key">F11</span> to exit fullscreen
+              </p>
+            </div>
+          </div>
+
+          <div class="feature-box">
+            <strong>🎯 Key Points</strong>
+            <div style="margin-top: 10px; font-size: 14px">
+              <p>✓ Stay connected (good WiFi)</p>
+              <p>✓ Submit answers quickly</p>
+              <p>✓ Watch live leaderboard</p>
+              <p>✓ All scoring is automatic</p>
+              <p>✓ Can't change answers</p>
+              <p>✓ Scores save automatically</p>
+              <p>✓ Follow admin's timing</p>
+              <p>✓ Have fun and compete!</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer>
+        <p>QuizBattle Platform User Guide | Version 1.0 | August 2026</p>
+        <p>For college IT club quiz competitions | Ready for production use</p>
+        <p style="margin-top: 20px; font-size: 11px">
+          This guide covers all aspects of the QuizBattle platform including
+          participant registration, quiz participation, admin controls, and
+          display screen operation. Print this document as a PDF for easy
+          reference during your event.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

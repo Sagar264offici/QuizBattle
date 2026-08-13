@@ -1,0 +1,2650 @@
+Round  1  —  Computer  &  IT  Basics  
+1  Point  each  
+Q1.  What  does  CPU  stand  for?  
+A)  Central  Processing  Unit  
+ 
+B)
+ 
+Computer
+ 
+Personal
+ 
+Unit
+ 
+ 
+C)
+ 
+Central
+ 
+Program
+ 
+Utility
+ 
+ 
+D)
+ 
+Computer
+ 
+Processing
+ 
+User
+ 
+✅  Answer:  A)  Central  Processing  Unit  
+Q2.  Which  device  is  mainly  used  to  display  output?  
+A)  Keyboard  
+ 
+B)
+ 
+Mouse
+ 
+ 
+C)
+ 
+Monitor
+ 
+ 
+D)
+ 
+Scanner
+ 
+✅  Answer:  C)  Monitor  
+Q3.  Which  of  these  is  an  input  device?  
+A)  Monitor  
+ 
+B)
+ 
+Printer
+ 
+ 
+C)
+ 
+Keyboard
+ 
+ 
+D)
+ 
+Speaker
+ 
+✅  Answer:  C)  Keyboard  
+Q4.  Which  device  is  used  to  move  the  pointer  on  a  computer?  
+A)  Mouse  
+ 
+B)
+ 
+Printer
+ 
+ 
+C)
+ 
+Speaker
+ 
+ 
+D)
+ 
+Projector
+ 
+---PAGE---
+✅  Answer:  A)  Mouse  
+Q5.  Which  of  the  following  is  an  operating  system?  
+A)  Google  
+ 
+B)
+ 
+Windows
+ 
+ 
+C)
+ 
+YouTube
+ 
+ 
+D)
+ 
+Intel
+ 
+✅  Answer:  B)  Windows  
+Q6.  What  is  the  full  form  of  RAM?  
+A)  Random  Access  Memory  
+ 
+B)
+ 
+Read
+ 
+Access
+ 
+Memory
+ 
+ 
+C)
+ 
+Rapid
+ 
+Access
+ 
+Machine
+ 
+ 
+D)
+ 
+Random
+ 
+Application
+ 
+Memory
+ 
+✅  Answer:  A)  Random  Access  Memory  
+Q7.  Which  one  stores  data  permanently?  
+A)  RAM  
+ 
+B)
+ 
+Cache
+ 
+ 
+C)
+ 
+SSD
+ 
+ 
+D)
+ 
+Register
+ 
+✅  Answer:  C)  SSD  
+Q8.  What  is  the  brain  of  a  computer  commonly  called?  
+A)  RAM  
+ 
+B)
+ 
+CPU
+ 
+ 
+C)
+ 
+Hard
+ 
+Disk
+ 
+ 
+D)
+ 
+Monitor
+ 
+✅  Answer:  B)  CPU  
+Q9.  Which  key  is  commonly  used  to  delete  characters  to  the  left  
+of
+ 
+the
+ 
+cursor?
+ 
+---PAGE---
+A)  Shift  
+ 
+B)
+ 
+Ctrl
+ 
+ 
+C)
+ 
+Backspace
+ 
+ 
+D)
+ 
+Alt
+ 
+✅  Answer:  C)  Backspace  
+Q10.  Which  shortcut  is  commonly  used  to  copy  selected  text?  
+A)  Ctrl  +  X  
+ 
+B)
+ 
+Ctrl
+ 
++
+ 
+C
+ 
+ 
+C)
+ 
+Ctrl
+ 
++
+ 
+V
+ 
+ 
+D)
+ 
+Ctrl
+ 
++
+ 
+Z
+ 
+✅  Answer:  B)  Ctrl  +  C  
+Q11.  Which  shortcut  is  commonly  used  to  paste?  
+A)  Ctrl  +  P  
+ 
+B)
+ 
+Ctrl
+ 
++
+ 
+V
+ 
+ 
+C)
+ 
+Ctrl
+ 
++
+ 
+S
+ 
+ 
+D)
+ 
+Ctrl
+ 
++
+ 
+A
+ 
+✅  Answer:  B)  Ctrl  +  V  
+Q12.  Which  shortcut  is  used  to  save  a  file?  
+A)  Ctrl  +  S  
+ 
+B)
+ 
+Ctrl
+ 
++
+ 
+F
+ 
+ 
+C)
+ 
+Ctrl
+ 
++
+ 
+D
+ 
+ 
+D)
+ 
+Ctrl
+ 
++
+ 
+W
+ 
+✅  Answer:  A)  Ctrl  +  S  
+Q13.  Which  of  these  is  a  web  browser?  
+A)  Chrome  
+ 
+B)
+ 
+Windows
+ 
+ 
+C)
+ 
+Linux
+ 
+ 
+D)
+ 
+Android
+ 
+---PAGE---
+✅  Answer:  A)  Chrome  
+Q14.  Which  company  develops  the  Windows  operating  system?  
+A)  Apple  
+ 
+B)
+ 
+Microsoft
+ 
+ 
+C)
+ 
+Google
+ 
+ 
+D)
+ 
+IBM
+ 
+✅  Answer:  B)  Microsoft  
+Q15.  What  is  used  to  print  documents  on  paper?  
+A)  Scanner  
+ 
+B)
+ 
+Monitor
+ 
+ 
+C)
+ 
+Printer
+ 
+ 
+D)
+ 
+Router
+ 
+✅  Answer:  C)  Printer  
+Q16.  Which  of  these  is  a  search  engine?  
+A)  Google  
+ 
+B)
+ 
+Windows
+ 
+ 
+C)
+ 
+Linux
+ 
+ 
+D)
+ 
+Python
+ 
+✅  Answer:  A)  Google  
+Q17.  What  is  a  file  extension  commonly  associated  with  a  
+Microsoft
+ 
+Word
+ 
+document?
+ 
+A)  .mp3  
+ 
+B)
+ 
+.jpg
+ 
+ 
+C)
+ 
+.docx
+ 
+ 
+D)
+ 
+.exe
+ 
+✅  Answer:  C)  .docx  
+---PAGE---
+Q18.  Which  of  these  is  used  to  store  pictures?  
+A)  .jpg  
+ 
+B)
+ 
+.mp3
+ 
+ 
+C)
+ 
+.exe
+ 
+ 
+D)
+ 
+.txt
+ 
+✅  Answer:  A)  .jpg  
+Q19.  1  KB  is  approximately  equal  to:  
+A)  100  bytes  
+ 
+B)
+ 
+1024
+ 
+bytes
+ 
+ 
+C)
+ 
+1000
+ 
+MB
+ 
+ 
+D)
+ 
+8
+ 
+bytes
+ 
+✅  Answer:  B)  1024  bytes  
+Q20.  Which  device  connects  a  computer  to  a  network  wirelessly?  
+A)  Wi-Fi  adapter  
+ 
+B)
+ 
+Printer
+ 
+ 
+C)
+ 
+Keyboard
+ 
+ 
+D)
+ 
+Webcam
+ 
+✅  Answer:  A)  Wi-Fi  adapter  
+       
+---PAGE---
+Round  2  —  Internet,  Web  &  Digital  
+World
+ 
+1  Point  each  
+Q21.  What  does  WWW  stand  for?  
+A)  World  Wide  Web  
+ 
+B)
+ 
+World
+ 
+Web
+ 
+Window
+ 
+ 
+C)
+ 
+Wide
+ 
+World
+ 
+Wire
+ 
+ 
+D)
+ 
+Web
+ 
+World
+ 
+Wide
+ 
+✅  Answer:  A)  World  Wide  Web  
+Q22.  What  does  URL  stand  for?  
+A)  Uniform  Resource  Locator  
+ 
+B)
+ 
+Universal
+ 
+Reference
+ 
+Link
+ 
+ 
+C)
+ 
+Uniform
+ 
+Research
+ 
+Link
+ 
+ 
+D)
+ 
+User
+ 
+Resource
+ 
+Location
+ 
+✅  Answer:  A)  Uniform  Resource  Locator  
+Q23.  Which  symbol  is  normally  present  in  an  email  address?  
+A)  #  
+ 
+B)
+ 
+@
+ 
+ 
+C)
+ 
+&
+ 
+ 
+D)
+ 
+%
+ 
+✅  Answer:  B)  @  
+Q24.  Which  protocol  is  commonly  used  for  secure  websites?  
+---PAGE---
+A)  HTTP  
+ 
+B)
+ 
+HTTPS
+ 
+ 
+C)
+ 
+FTP
+ 
+ 
+D)
+ 
+SMTP
+ 
+✅  Answer:  B)  HTTPS  
+Q25.  What  does  "Wi-Fi"  allow  devices  to  do?  
+A)  Connect  to  a  network  wirelessly  
+ 
+B)
+ 
+Increase
+ 
+RAM
+ 
+ 
+C)
+ 
+Print
+ 
+documents
+ 
+ 
+D)
+ 
+Charge
+ 
+batteries
+ 
+✅  Answer:  A)  Connect  to  a  network  wirelessly  
+Q26.  Which  device  commonly  provides  internet  access  to  
+multiple
+ 
+devices
+ 
+at
+ 
+home?
+ 
+A)  Router  
+ 
+B)
+ 
+Monitor
+ 
+ 
+C)
+ 
+Keyboard
+ 
+ 
+D)
+ 
+Scanner
+ 
+✅  Answer:  A)  Router  
+Q27.  What  is  a  website?  
+A)  A  collection  of  web  pages  
+ 
+B)
+ 
+A
+ 
+computer
+ 
+processor
+ 
+ 
+C)
+ 
+A
+ 
+keyboard
+ 
+layout
+ 
+ 
+D)
+ 
+A
+ 
+type
+ 
+of
+ 
+RAM
+ 
+✅  Answer:  A)  A  collection  of  web  pages  
+Q28.  Which  language  is  mainly  used  to  structure  web  pages?  
+---PAGE---
+A)  HTML  
+ 
+B)
+ 
+SQL
+ 
+ 
+C)
+ 
+Python
+ 
+ 
+D)
+ 
+C++
+ 
+✅  Answer:  A)  HTML  
+Q29.  Which  language  is  commonly  used  to  style  web  pages?  
+A)  HTML  
+ 
+B)
+ 
+CSS
+ 
+ 
+C)
+ 
+SQL
+ 
+ 
+D)
+ 
+Java
+ 
+✅  Answer:  B)  CSS  
+Q30.  Which  language  is  commonly  used  to  add  interactivity  to  
+web
+ 
+pages?
+ 
+A)  JavaScript  
+ 
+B)
+ 
+HTML
+ 
+ 
+C)
+ 
+SQL
+ 
+ 
+D)
+ 
+XML
+ 
+✅  Answer:  A)  JavaScript  
+Q31.  What  does  HTTP  404  usually  mean?  
+A)  Website  is  secure  
+ 
+B)
+ 
+Page
+ 
+not
+ 
+found
+ 
+ 
+C)
+ 
+Server
+ 
+is
+ 
+working
+ 
+perfectly
+ 
+ 
+D)
+ 
+Login
+ 
+successful
+ 
+✅  Answer:  B)  Page  not  found  
+Q32.  What  does  downloading  mean?  
+---PAGE---
+A)  Sending  data  from  your  device  to  the  internet  
+ 
+B)
+ 
+Receiving
+ 
+data
+ 
+from
+ 
+the
+ 
+internet
+ 
+ 
+C)
+ 
+Deleting
+ 
+data
+ 
+ 
+D)
+ 
+Encrypting
+ 
+data
+ 
+✅  Answer:  B)  Receiving  data  from  the  internet  
+Q33.  What  does  uploading  mean?  
+A)  Sending  data  from  your  device  to  another  system/server  
+ 
+B)
+ 
+Deleting
+ 
+a
+ 
+file
+ 
+ 
+C)
+ 
+Opening
+ 
+a
+ 
+browser
+ 
+ 
+D)
+ 
+Restarting
+ 
+a
+ 
+computer
+ 
+✅  Answer:  A)  Sending  data  from  your  device  to  another  
+system/server
+ 
+Q34.  Which  is  an  example  of  cloud  storage?  
+A)  Google  Drive  
+ 
+B)
+ 
+Keyboard
+ 
+ 
+C)
+ 
+RAM
+ 
+ 
+D)
+ 
+BIOS
+ 
+✅  Answer:  A)  Google  Drive  
+Q35.  What  is  a  CAPTCHA  generally  used  for?  
+A)  Increase  screen  brightness  
+ 
+B)
+ 
+Distinguish
+ 
+humans
+ 
+from
+ 
+automated
+ 
+bots
+ 
+ 
+C)
+ 
+Compress
+ 
+files
+ 
+ 
+D)
+ 
+Play
+ 
+videos
+ 
+✅  Answer:  B)  Distinguish  humans  from  automated  bots  
+Q36.  What  is  a  domain  name?  
+---PAGE---
+A)  A  human-readable  website  address  
+ 
+B)
+ 
+A
+ 
+computer's
+ 
+RAM
+ 
+ 
+C)
+ 
+A
+ 
+password
+ 
+ 
+D)
+ 
+A
+ 
+file
+ 
+type
+ 
+✅  Answer:  A)  A  human-readable  website  address  
+Q37.  Which  one  is  a  valid  domain?  
+A)  google.com  
+ 
+B)
+ 
+google@
+ 
+ 
+C)
+ 
+google#
+ 
+ 
+D)
+ 
+google.exe
+ 
+✅  Answer:  A)  google.com  
+Q38.  What  is  a  browser  mainly  used  for?  
+A)  Browsing  websites  
+ 
+B)
+ 
+Editing
+ 
+hardware
+ 
+ 
+C)
+ 
+Increasing
+ 
+storage
+ 
+ 
+D)
+ 
+Charging
+ 
+a
+ 
+laptop
+ 
+✅  Answer:  A)  Browsing  websites  
+Q39.  Which  application  is  commonly  used  for  video  meetings?  
+A)  Zoom  
+ 
+B)
+ 
+Notepad
+ 
+ 
+C)
+ 
+Paint
+ 
+ 
+D)
+ 
+Calculator
+ 
+✅  Answer:  A)  Zoom  
+Q40.  What  does  "online"  generally  mean?  
+---PAGE---
+A)  Connected  to  a  network  or  internet  
+ 
+B)
+ 
+Computer
+ 
+turned
+ 
+off
+ 
+ 
+C)
+ 
+No
+ 
+storage
+ 
+available
+ 
+ 
+D)
+ 
+Printer
+ 
+disconnected
+ 
+✅  Answer:  A)  Connected  to  a  network  or  internet  
+       
+Round  3  —  Programming  &  Logic  
+2  Points  each  
+Q41.  What  is  a  program?  A)  A  set  of  instructions  for  a  computer  
+ 
+B)
+ 
+A
+ 
+computer
+ 
+screen
+ 
+ 
+C)
+ 
+A
+ 
+storage
+ 
+device
+ 
+ 
+D)
+ 
+A
+ 
+network
+ 
+cable
+ ✅  Answer:  A)  A  set  of  instructions  for  a  computer  
+Q42.  Which  of  these  is  a  programming  language?  A)  Python  
+ 
+B)
+ 
+Chrome
+ 
+---PAGE---
+ C)  Windows  
+ 
+D)
+ 
+Google
+ ✅  Answer:  A)  Python  
+Q43.  What  is  a  variable?  A)  A  place  to  store  a  value  in  a  program  
+ 
+B)
+ 
+A
+ 
+computer
+ 
+cable
+ 
+ 
+C)
+ 
+A
+ 
+web
+ 
+browser
+ 
+ 
+D)
+ 
+A
+ 
+hardware
+ 
+device
+ ✅  Answer:  A)  A  place  to  store  a  value  in  a  program  
+Q44.  Which  value  is  an  integer?  
+A)  "Hello"   B)  25   C)  25.5   D)  True  
+✅  Answer:  B)  25  
+Q45.  Which  value  is  a  string?  A)  100  
+ 
+B)
+ 
+3.14
+ 
+ 
+C)
+ "Hello"   D)  True  
+---PAGE---
+✅  Answer:  C)  "Hello"  
+Q46.  What  does  an  if statement  generally  do?  
+A)  Makes  a  decision  based  on  a  condition  
+ 
+B)
+ 
+Stores
+ 
+a
+ 
+file
+ 
+ 
+C)
+ 
+Connects
+ 
+to
+ 
+Wi-Fi
+ 
+ 
+D)
+ 
+Prints
+ 
+a
+ 
+document
+ ✅  Answer:  A)  Makes  a  decision  based  on  a  
+condition
+ 
+Q47.  What  is  a  loop  used  for?  A)  Repeating  instructions  
+ 
+B)
+ 
+Connecting
+ 
+to
+ 
+the
+ 
+internet
+ 
+ 
+C)
+ 
+Storing
+ 
+pictures
+ 
+ 
+D)
+ 
+Turning
+ 
+off
+ 
+the
+ 
+computer
+ ✅  Answer:  A)  Repeating  instructions  
+Q48.  What  is  a  function?  A)  A  reusable  block  of  code  
+ 
+B)
+ 
+A
+ 
+type
+ 
+of
+ 
+monitor
+ 
+ 
+C)
+ 
+A
+ 
+storage
+ 
+device
+ 
+ 
+D)
+ 
+A
+ 
+network
+ 
+protocol
+ ✅  Answer:  A)  A  reusable  block  of  code  
+---PAGE---
+Q49.  What  is  an  algorithm?  A)  A  step-by-step  method  to  solve  a  problem  
+ 
+B)
+ 
+A
+ 
+programming
+ 
+keyboard
+ 
+ 
+C)
+ 
+A
+ 
+type
+ 
+of
+ 
+virus
+ 
+ 
+D)
+ 
+An
+ 
+operating
+ 
+system
+ ✅  Answer:  A)  A  step-by-step  method  to  solve  a  
+problem
+ 
+Q50.  What  will  2  +  3 produce  in  most  
+programming
+ 
+languages?
+ A)  5  
+ 
+B)
+ 
+6
+ 
+ 
+C)
+ 
+23
+ 
+ 
+D)
+ 
+1
+ ✅  Answer:  A)  5  
+Q51.  What  is  the  result  of  10  >  5?  
+A)  False  
+ 
+B)
+ 
+True
+ 
+ 
+C)
+ 
+0
+ 
+ 
+D)
+ 
+Error
+ ✅  Answer:  B)  True  
+---PAGE---
+Q52.  Which  symbol  is  commonly  used  for  
+multiplication?
+ A)  x  
+ 
+B)
+ 
+*
+ 
+ 
+C)
+ 
+#
+ 
+ 
+D)
+ 
+%
+ 
+✅  Answer:  B)  *  
+Q53.  Which  of  these  is  used  to  represent  "not  
+equal"
+ 
+in
+ 
+many
+ 
+languages?
+ 
+A)  =   B)  ==   C)  !=   D)  =>  
+✅  Answer:  C)  !=  
+Q54.  What  is  debugging?  A)  Finding  and  fixing  errors  in  code  
+ 
+B)
+ 
+Writing
+ 
+an
+ 
+email
+ 
+ 
+C)
+ 
+Installing
+ 
+RAM
+ 
+ 
+D)
+ 
+Creating
+ 
+a
+ 
+password
+ ✅  Answer:  A)  Finding  and  fixing  errors  in  code  
+---PAGE---
+Q55.  What  is  an  error  in  a  program?  A)  A  problem  that  prevents  the  program  from  behaving  
+correctly
+ 
+ 
+B)
+ 
+A
+ 
+type
+ 
+of
+ 
+computer
+ 
+monitor
+ 
+ 
+C)
+ 
+A
+ 
+web
+ 
+browser
+ 
+ 
+D)
+ 
+A
+ 
+storage
+ 
+method
+ ✅  Answer:  A)  A  problem  that  prevents  the  
+program
+ 
+from
+ 
+behaving
+ 
+correctly
+ 
+Q56.  Which  language  is  known  for  being  
+beginner-friendly?
+ A)  Python  
+ 
+B)
+ 
+Machine
+ 
+code
+ 
+only
+ 
+ 
+C)
+ 
+Assembly
+ 
+only
+ 
+ 
+D)
+ 
+Binary
+ 
+only
+ ✅  Answer:  A)  Python  
+Q57.  What  does  print() commonly  do  in  Python?  
+A)  Displays  output  
+ 
+B)
+ 
+Deletes
+ 
+a
+ 
+file
+ 
+ 
+C)
+ 
+Opens
+ 
+Wi-Fi
+ 
+ 
+D)
+ 
+Shuts
+ 
+down
+ 
+the
+ 
+system
+ ✅  Answer:  A)  Displays  output  
+---PAGE---
+Q58.  What  is  an  array?  A)  A  collection  of  values  
+ 
+B)
+ 
+A
+ 
+monitor
+ 
+ 
+C)
+ 
+A
+ 
+network
+ 
+cable
+ 
+ 
+D)
+ 
+An
+ 
+operating
+ 
+system
+ ✅  Answer:  A)  A  collection  of  values  
+Q59.  Which  data  type  represents  True/False?  A)  Integer  
+ 
+B)
+ 
+String
+ 
+ 
+C)
+ 
+Boolean
+ 
+ 
+D)
+ 
+Float
+ ✅  Answer:  C)  Boolean  
+Q60.  If  a  program  asks  for  your  name  and  you  enter  
+"Sagar",
+ 
+what
+ 
+type
+ 
+of
+ 
+data
+ 
+is
+ 
+it?
+ A)  Integer  
+ 
+B)
+ 
+String
+ 
+ 
+C)
+ 
+Boolean
+ 
+ 
+D)
+ 
+Float
+ ✅  Answer:  B)  String  
+   
+---PAGE---
+   
+Round  4  —  Cybersecurity,  AI  &  Modern  
+IT
+ 
+2  Points  each  
+Q61.  What  is  cybersecurity?  
+A)  Protecting  systems  and  data  from  digital  attacks  
+ 
+B)
+ 
+Making
+ 
+websites
+ 
+colorful
+ 
+ 
+C)
+ 
+Increasing
+ 
+CPU
+ 
+speed
+ 
+ 
+D)
+ 
+Installing
+ 
+games
+ 
+✅  Answer:  A)  Protecting  systems  and  data  from  digital  attacks  
+Q62.  What  is  a  strong  password?  
+A)  123456   B)  password   C)  A  long,  unique  password  
+ 
+D)
+ 
+Your
+ 
+first
+ 
+name
+ 
+✅  Answer:  C)  A  long,  unique  password  
+Q63.  What  is  phishing?  
+A)  A  method  of  tricking  people  into  revealing  sensitive  information  
+ 
+B)
+ 
+A
+ 
+programming
+ 
+language
+ 
+ 
+C)
+ 
+A
+ 
+database
+ 
+system
+ 
+ 
+D)
+ 
+A
+ 
+type
+ 
+of
+ 
+monitor
+ 
+---PAGE---
+✅  Answer:  A)  A  method  of  tricking  people  into  revealing  
+sensitive
+ 
+information
+ 
+Q64.  Which  is  the  safest  action  when  you  receive  a  suspicious  
+email
+ 
+link?
+ 
+A)  Click  immediately  
+ 
+B)
+ 
+Share
+ 
+it
+ 
+with
+ 
+friends
+ 
+ 
+C)
+ 
+Verify
+ 
+the
+ 
+sender
+ 
+and
+ 
+link
+ 
+before
+ 
+opening
+ 
+ 
+D)
+ 
+Enter
+ 
+your
+ 
+password
+ 
+✅  Answer:  C)  Verify  the  sender  and  link  before  opening  
+Q65.  What  is  malware?  
+A)  Malicious  software  
+ 
+B)
+ 
+A
+ 
+programming
+ 
+framework
+ 
+ 
+C)
+ 
+A
+ 
+web
+ 
+browser
+ 
+ 
+D)
+ 
+A
+ 
+database
+ 
+✅  Answer:  A)  Malicious  software  
+Q66.  What  is  a  computer  virus?  
+A)  A  type  of  malicious  program  
+ 
+B)
+ 
+A
+ 
+hardware
+ 
+component
+ 
+ 
+C)
+ 
+A
+ 
+web
+ 
+server
+ 
+ 
+D)
+ 
+An
+ 
+operating
+ 
+system
+ 
+✅  Answer:  A)  A  type  of  malicious  program  
+Q67.  What  does  antivirus  software  do?  
+A)  Helps  detect  and  remove  malicious  software  
+ 
+B)
+ 
+Increases
+ 
+monitor
+ 
+size
+ 
+---PAGE---
+ C)  Creates  websites  
+ 
+D)
+ 
+Increases
+ 
+internet
+ 
+speed
+ 
+✅  Answer:  A)  Helps  detect  and  remove  malicious  software  
+Q68.  What  does  2FA  stand  for?  
+A)  Two-Factor  Authentication  
+ 
+B)
+ 
+Two
+ 
+File
+ 
+Access
+ 
+ 
+C)
+ 
+Two
+ 
+Format
+ 
+Application
+ 
+ 
+D)
+ 
+Two
+ 
+Function
+ 
+Algorithm
+ 
+✅  Answer:  A)  Two-Factor  Authentication  
+Q69.  Why  is  HTTPS  safer  than  HTTP?  
+A)  It  encrypts  communication  between  the  browser  and  website  
+ 
+B)
+ 
+It
+ 
+makes
+ 
+the
+ 
+computer
+ 
+faster
+ 
+ 
+C)
+ 
+It
+ 
+increases
+ 
+RAM
+ 
+ 
+D)
+ 
+It
+ 
+blocks
+ 
+every
+ 
+virus
+ 
+✅  Answer:  A)  It  encrypts  communication  between  the  browser  
+and
+ 
+website
+ 
+Q70.  What  is  encryption?  
+A)  Converting  data  into  a  protected  encoded  form  
+ 
+B)
+ 
+Deleting
+ 
+data
+ 
+ 
+C)
+ 
+Copying
+ 
+data
+ 
+ 
+D)
+ 
+Printing
+ 
+data
+ 
+✅  Answer:  A)  Converting  data  into  a  protected  encoded  form  
+Q71.  What  is  artificial  intelligence?  
+A)  Technology  that  enables  computers  to  perform  tasks  associated  
+with
+ 
+human
+ 
+intelligence
+ 
+---PAGE---
+ B)  A  type  of  keyboard  
+ 
+C)
+ 
+A
+ 
+storage
+ 
+device
+ 
+ 
+D)
+ 
+A
+ 
+network
+ 
+cable
+ 
+✅  Answer:  A)  Technology  that  enables  computers  to  perform  
+tasks
+ 
+associated
+ 
+with
+ 
+human
+ 
+intelligence
+ 
+Q72.  Which  is  an  example  of  generative  AI?  
+A)  A  system  that  generates  text  or  images  from  prompts  
+ 
+B)
+ 
+A
+ 
+keyboard
+ 
+ 
+C)
+ 
+A
+ 
+printer
+ 
+ 
+D)
+ 
+A
+ 
+calculator
+ 
+✅  Answer:  A)  A  system  that  generates  text  or  images  from  
+prompts
+ 
+Q73.  What  is  machine  learning?  
+A)  A  method  where  computers  learn  patterns  from  data  
+ 
+B)
+ 
+A
+ 
+method
+ 
+of
+ 
+cleaning
+ 
+hardware
+ 
+ 
+C)
+ 
+A
+ 
+type
+ 
+of
+ 
+monitor
+ 
+ 
+D)
+ 
+A
+ 
+file
+ 
+format
+ 
+✅  Answer:  A)  A  method  where  computers  learn  patterns  from  
+data
+ 
+Q74.  What  is  a  chatbot?  
+A)  Software  designed  to  communicate  with  users  
+ 
+B)
+ 
+A
+ 
+computer
+ 
+virus
+ 
+ 
+C)
+ 
+A
+ 
+network
+ 
+cable
+ 
+ 
+D)
+ 
+A
+ 
+type
+ 
+of
+ 
+CPU
+ 
+✅  Answer:  A)  Software  designed  to  communicate  with  users  
+---PAGE---
+Q75.  Which  of  the  following  is  an  example  of  biometric  
+authentication?
+ 
+A)  Fingerprint  
+ 
+B)
+ 
+Username
+ 
+ 
+C)
+ 
+Password
+ 
+ 
+D)
+ 
+PIN
+ 
+✅  Answer:  A)  Fingerprint  
+Q76.  What  is  a  firewall?  
+A)  A  system  that  controls  network  traffic  
+ 
+B)
+ 
+A
+ 
+physical
+ 
+wall
+ 
+around
+ 
+a
+ 
+computer
+ 
+ 
+C)
+ 
+A
+ 
+programming
+ 
+language
+ 
+ 
+D)
+ 
+A
+ 
+database
+ 
+✅  Answer:  A)  A  system  that  controls  network  traffic  
+Q77.  What  is  personal  data?  
+A)  Information  that  can  relate  to  an  individual  
+ 
+B)
+ 
+Only
+ 
+computer
+ 
+hardware
+ 
+ 
+C)
+ 
+Only
+ 
+public
+ 
+websites
+ 
+ 
+D)
+ 
+Only
+ 
+programming
+ 
+code
+ 
+✅  Answer:  A)  Information  that  can  relate  to  an  individual  
+Q78.  Which  is  safer  on  a  public  computer?  
+A)  Saving  your  password  permanently  
+ 
+B)
+ 
+Logging
+ 
+out
+ 
+after
+ 
+use
+ 
+ 
+C)
+ 
+Sharing
+ 
+your
+ 
+password
+ 
+ 
+D)
+ 
+Disabling
+ 
+security
+ 
+✅  Answer:  B)  Logging  out  after  use  
+---PAGE---
+Q79.  What  should  you  do  before  installing  an  unknown  
+application?
+ 
+A)  Install  immediately  
+ 
+B)
+ 
+Check
+ 
+its
+ 
+source
+ 
+and
+ 
+legitimacy
+ 
+ 
+C)
+ 
+Disable
+ 
+antivirus
+ 
+ 
+D)
+ 
+Share
+ 
+your
+ 
+password
+ 
+✅  Answer:  B)  Check  its  source  and  legitimacy  
+Q80.  What  is  cloud  computing?  
+A)  Using  computing  resources  over  the  internet  
+ 
+B)
+ 
+Storing
+ 
+data
+ 
+only
+ 
+on
+ 
+paper
+ 
+ 
+C)
+ 
+Repairing
+ 
+computers
+ 
+ 
+D)
+ 
+Connecting
+ 
+a
+ 
+keyboard
+ 
+✅  Answer:  A)  Using  computing  resources  over  the  internet  
+    
+Round  5   
+The  Hackathon  Challenge  
+3  Points  each  
+This  round  is  where  2nd-  and  3rd-year  students  should  have  an  
+advantage
+,
+ 
+but
+ 
+freshers
+ 
+can
+ 
+still
+ 
+solve
+ 
+several
+ 
+through
+ 
+logic.
+ 
+---PAGE---
+Q81.  A  program  receives  the  number  5  and  prints  25.  What  is  it  
+most
+ 
+likely
+ 
+doing?
+ 
+A)  Adding  20  
+ 
+B)
+ 
+Multiplying
+ 
+the
+ 
+number
+ 
+by
+ 
+itself
+ 
+ 
+C)
+ 
+Subtracting
+ 
+20
+ 
+ 
+D)
+ 
+Dividing
+ 
+by
+ 
+5
+ 
+✅  Answer:  B)  Multiplying  the  number  by  itself  
+Q82.  What  is  the  output  of  this  logic?  
+x  =  10   if  x  >  5:  print("Yes")  
+A)  No  
+ 
+B)
+ 
+Yes
+ 
+ 
+C)
+ 
+10
+ 
+ 
+D)
+ 
+Error
+ 
+✅  Answer:  B)  Yes  
+Q83.  Which  comes  first  when  visiting  a  website?  
+A)  Browser  sends  a  request  
+ 
+B)
+ 
+Printer
+ 
+prints
+ 
+the
+ 
+website
+ 
+ 
+C)
+ 
+Keyboard
+ 
+creates
+ 
+the
+ 
+website
+ 
+ 
+D)
+ 
+Monitor
+ 
+sends
+ 
+the
+ 
+request
+ 
+✅  Answer:  A)  Browser  sends  a  request  
+Q84.  If  a  website  is  working  on  your  friend's  phone  but  not  on  
+yours,
+ 
+which
+ 
+is
+ 
+the
+ 
+most
+ 
+sensible
+ 
+first
+ 
+step?
+ 
+A)  Destroy  the  router  
+ 
+B)
+ 
+Check
+ 
+your
+ 
+internet
+ 
+connection
+ 
+---PAGE---
+ C)  Delete  the  website  
+ 
+D)
+ 
+Format
+ 
+the
+ 
+phone
+ 
+✅  Answer:  B)  Check  your  internet  connection  
+Q85.  You  need  to  store  100  student  names  in  a  program.  Which  is  
+most
+ 
+suitable?
+ 
+A)  A  single  number  
+ 
+B)
+ 
+An
+ 
+array/list
+ 
+ 
+C)
+ 
+A
+ 
+Boolean
+ 
+ 
+D)
+ 
+A
+ 
+single
+ 
+character
+ 
+✅  Answer:  B)  An  array/list  
+Q86.  Which  database  operation  is  used  to  retrieve  information?  
+A)  SELECT  
+ 
+B)
+ 
+DELETE
+ 
+ 
+C)
+ 
+INSERT
+ 
+ 
+D)
+ 
+DROP
+ 
+✅  Answer:  A)  SELECT  
+Q87.  Which  SQL  command  adds  a  new  record?  
+A)  SELECT  
+ 
+B)
+ 
+INSERT
+ 
+ 
+C)
+ 
+UPDATE
+ 
+ 
+D)
+ 
+DELETE
+ 
+✅  Answer:  B)  INSERT  
+Q88.  Which  SQL  command  changes  existing  data?  
+A)  CREATE  
+ 
+B)
+ 
+UPDATE
+ 
+---PAGE---
+ C)  SELECT  
+ 
+D)
+ 
+INSERT
+ 
+✅  Answer:  B)  UPDATE  
+Q89.  Which  data  structure  follows  FIFO?  
+A)  Stack  
+ 
+B)
+ 
+Queue
+ 
+ 
+C)
+ 
+Tree
+ 
+ 
+D)
+ 
+Graph
+ 
+✅  Answer:  B)  Queue  
+Q90.  Which  data  structure  follows  LIFO?  
+A)  Queue  
+ 
+B)
+ 
+Stack
+ 
+ 
+C)
+ 
+Array
+ 
+ 
+D)
+ 
+Tree
+ 
+✅  Answer:  B)  Stack  
+Q91.  If  you  want  to  find  the  shortest  path  between  two  locations  
+on
+ 
+a
+ 
+map,
+ 
+which
+ 
+concept
+ 
+is
+ 
+useful?
+ 
+A)  Graph  algorithms  
+ 
+B)
+ 
+Word
+ 
+processing
+ 
+ 
+C)
+ 
+Image
+ 
+compression
+ 
+only
+ 
+ 
+D)
+ 
+Keyboard
+ 
+shortcuts
+ 
+✅  Answer:  A)  Graph  algorithms  
+Q92.  Which  HTTP  method  is  normally  used  to  retrieve  
+information
+ 
+from
+ 
+a
+ 
+server?
+ 
+---PAGE---
+A)  GET  
+ 
+B)
+ 
+POST
+ 
+ 
+C)
+ 
+DELETE
+ 
+ 
+D)
+ 
+PATCH
+ 
+✅  Answer:  A)  GET  
+Q93.  Which  HTTP  status  code  normally  means  "OK"?  
+A)  200  
+ 
+B)
+ 
+404
+ 
+ 
+C)
+ 
+500
+ 
+ 
+D)
+ 
+301
+ 
+✅  Answer:  A)  200  
+Q94.  Which  HTTP  status  code  means  "Not  Found"?  
+A)  200  
+ 
+B)
+ 
+301
+ 
+ 
+C)
+ 
+404
+ 
+ 
+D)
+ 
+500
+ 
+✅  Answer:  C)  404  
+Q95.  A  website  asks  for  a  student's  name,  email  and  password.  
+Which
+ 
+should
+ 
+NOT
+ 
+be
+ 
+stored
+ 
+as
+ 
+plain
+ 
+text?
+ 
+A)  Password  
+ 
+B)
+ 
+Student
+ 
+name
+ 
+ 
+C)
+ 
+City
+ 
+ 
+D)
+ 
+Course
+ 
+name
+ 
+✅  Answer:  A)  Password  
+Q96.  Which  version-control  tool  is  widely  used  by  developers?  
+---PAGE---
+A)  Git  
+ 
+B)
+ 
+Paint
+ 
+ 
+C)
+ 
+Calculator
+ 
+ 
+D)
+ 
+Notepad
+ 
+✅  Answer:  A)  Git  
+Q97.  What  is  the  main  purpose  of  Git?  
+A)  Track  changes  in  code  
+ 
+B)
+ 
+Increase
+ 
+internet
+ 
+speed
+ 
+ 
+C)
+ 
+Edit
+ 
+photos
+ 
+ 
+D)
+ 
+Scan
+ 
+documents
+ 
+✅  Answer:  A)  Track  changes  in  code  
+Q98.  Two  programmers  modify  the  same  part  of  a  file  using  Git.  
+What
+ 
+may
+ 
+happen?
+ 
+A)  Merge  conflict  
+ 
+B)
+ 
+Computer
+ 
+explodes
+ 
+ 
+C)
+ 
+Internet
+ 
+disappears
+ 
+ 
+D)
+ 
+RAM
+ 
+doubles
+ 
+✅  Answer:  A)  Merge  conflict  
+Q99.  Your  team  has  24  hours  to  build  a  project.  Which  approach  
+is
+ 
+generally
+ 
+best?
+ 
+A)  Build  every  possible  feature  
+ 
+B)
+ 
+Build
+ 
+a
+ 
+small
+ 
+working
+ 
+core
+ 
+feature
+ 
+first
+ 
+ 
+C)
+ 
+Spend
+ 
+20
+ 
+hours
+ 
+choosing
+ 
+colors
+ 
+ 
+D)
+ 
+Start
+ 
+coding
+ 
+without
+ 
+understanding
+ 
+the
+ 
+problem
+ 
+✅  Answer:  B)  Build  a  small  working  core  feature  first  
+---PAGE---
+Q100.  What  is  the  most  important  goal  of  a  hackathon  project?  
+A)  Having  the  most  complicated  code  
+ 
+B)
+ 
+Solving
+ 
+a
+ 
+real
+ 
+problem
+ 
+with
+ 
+a
+ 
+useful
+ 
+working
+ 
+solution
+ 
+ 
+C)
+ 
+Using
+ 
+as
+ 
+many
+ 
+programming
+ 
+languages
+ 
+as
+ 
+possible
+ 
+ 
+D)
+ 
+Making
+ 
+the
+ 
+project
+ 
+name
+ 
+complicated
+ 
+✅  Answer:  B)  Solving  a  real  problem  with  a  useful  working  
+solution
+ 
+ 

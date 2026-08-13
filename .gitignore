@@ -1,0 +1,8 @@
+node_modules
+.env
+.env.local
+dist
+.vite
+coverage
+*.db
+*.db-journal

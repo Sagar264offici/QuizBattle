@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum ClubName {
+  STACK_PUSH
+  IT_INNOVATORS
+}
+
+enum QuizState {
+  WAITING
+  READY
+  LIVE
+  LOCKED
+  REVEALED
+  RESULTS
+  FINISHED
+}
+
+model Club {
+  id    Int      @id @default(autoincrement())
+  name  ClubName @unique
+  score Int      @default(0)
+
+  participants Participant[]
+}
+
+model Round {
+  id          Int        @id @default(autoincrement())
+  name        String
+  description String?
+  pointValue  Int
+  order       Int
+  questions   Question[]
+}
+
+model Question {
+  id             Int          @id @default(autoincrement())
+  roundId        Int
+  questionNumber Int          @unique
+  questionText   String
+  optionA        String
+  optionB        String
+  optionC        String
+  optionD        String
+  correctAnswer  String
+  points         Int
+  order          Int
+  round          Round        @relation(fields: [roundId], references: [id])
+  submissions    Submission[]
+}
+
+model Participant {
+  id            Int          @id @default(autoincrement())
+  name          String
+  clubId        Int
+  sessionToken  String       @unique
+  joinedAt      DateTime     @default(now())
+  connected     Boolean      @default(true)
+  score         Int          @default(0)
+  correctCount  Int          @default(0)
+  attemptCount  Int          @default(0)
+  club          Club         @relation(fields: [clubId], references: [id])
+  submissions   Submission[]
+}
+
+model Submission {
+  id                 Int       @id @default(autoincrement())
+  participantId      Int
+  questionId         Int
+  answer             String
+  isCorrect          Boolean
+  questionStartedAt  DateTime
+  submissionTimestamp DateTime
+  responseTimeMs     Int
+  pointsAwarded      Int
+  createdAt          DateTime  @default(now())
+  participant        Participant @relation(fields: [participantId], references: [id])
+  question           Question    @relation(fields: [questionId], references: [id])
+
+  @@unique([participantId, questionId])
+}
+
+model QuizSession {
+  id               Int        @id @default(autoincrement())
+  status           QuizState  @default(WAITING)
+  currentRoundId   Int?
+  currentQuestionId Int?
+  questionStartedAt DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+}
+
+model AuditLog {
+  id             Int      @id @default(autoincrement())
+  action         String
+  timestamp      DateTime @default(now())
+  adminIdentifier String?
+  metadata       String?
+}
