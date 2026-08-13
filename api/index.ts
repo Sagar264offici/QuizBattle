@@ -1786,6 +1786,16 @@ r.post("/admin/reset-all-fresh", requireAdmin, async (_req, res) => {
   res.json({ ok: true, message: "All data cleared", state });
 });
 
+r.get("/debug-summary", async (_req, res) => {
+  const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
+  const participants = parseHGetAll(rawMap);
+  res.json({
+    rawMapLength: Array.isArray(rawMap) ? rawMap.length : typeof rawMap,
+    participantsLength: participants.length,
+    sample: participants.slice(0, 3),
+  });
+});
+
 r.post("/admin/end-quiz", requireAdmin, async (_req, res) => {
   const state = await setState({ status: "FINISHED" });
   res.json({ ok: true, state });
