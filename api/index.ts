@@ -1444,8 +1444,15 @@ function encodeToken(p: { id: number; name: string; club: string }): string {
 }
 
 function decodeToken(token: string): { id: number; name: string; club: string } | null {
+  if (!token) return null;
   try {
-    const d = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+    const raw = Buffer.from(token, "base64url").toString("utf8");
+    const d = JSON.parse(raw);
+    if (d?.name && d?.club) return { id: Number(d.id) || 1, name: String(d.name), club: String(d.club) };
+  } catch (_) {}
+  try {
+    const raw = Buffer.from(token, "base64").toString("utf8");
+    const d = JSON.parse(raw);
     if (d?.name && d?.club) return { id: Number(d.id) || 1, name: String(d.name), club: String(d.club) };
   } catch (_) {}
   return null;
