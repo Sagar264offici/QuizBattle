@@ -1,23 +1,23 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import AdminLoginPage from "./pages/AdminLoginPage";
 import AdminPage from "./pages/AdminPage";
 import DisplayPage from "./pages/DisplayPage";
-import JoinPage from "./pages/JoinPage";
-import QuizPage from "./pages/QuizPage";
+import StudentPage from "./pages/StudentPage";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
-        <Route path="/join" element={<JoinPage />} />
-        <Route path="/quiz" element={<QuizPage />} />
-        <Route path="/admin/login" element={<AdminLoginPage />} />
+        <Route path="/" element={<StudentPage />} />
+        <Route path="/student" element={<StudentPage />} />
+        <Route path="/join" element={<StudentPage />} />
+        <Route path="/quiz" element={<StudentPage />} />
+        <Route path="/host" element={<AdminPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/display" element={<DisplayPage />} />
-        <Route path="*" element={<JoinPage />} />
+        <Route path="*" element={<StudentPage />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>,
