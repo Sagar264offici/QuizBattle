@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchJson } from "../services/api";
+import { fetchJson, isSessionExpired, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
 interface Participant {
@@ -55,7 +55,7 @@ function loadCachedParticipant(): Participant | null {
   }
 }
 
-export default function StudentPage() {
+export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [sessionToken, setSessionToken] = useState<string>(() => {
     return localStorage.getItem("quizbattle-session") || "";
   });
@@ -103,6 +103,7 @@ export default function StudentPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
+  const [sessionEndedMessage, setSessionEndedMessage] = useState<string | null>(null);
 
   // Timers: 3s Appearing Countdown & 30s Question Timer
   const [countdownEndsAt, setCountdownEndsAt] = useState<string | null>(null);
@@ -119,6 +120,27 @@ export default function StudentPage() {
   const lastQuestionIdRef = useRef<number | null>(null);
   const sessionRequestRef = useRef(0);
   const sessionRequestInFlightRef = useRef(false);
+
+  // Called when the server reports this student's session was ended by the host
+  // (401 + SESSION_EXPIRED). Clears local storage + in-memory state and returns
+  // the student to the Join screen with a clear message.
+  const handleSessionEnded = () => {
+    localStorage.removeItem("quizbattle-session");
+    localStorage.removeItem("quizbattle-participant");
+    saveCachedAnswer(null);
+    sessionRequestRef.current += 1;
+    setSessionToken("");
+    setParticipant(null);
+    setStatus("WAITING");
+    setQuestion(null);
+    setSelectedAnswer(null);
+    setHasSubmitted(false);
+    setCorrectAnswer(null);
+    setIsSessionLoading(false);
+    setSessionEndedMessage(
+      mode === "test" ? "Your test session was ended by the host." : "Your session was ended by the host.",
+    );
+  };
 
   // Sync session and participant data
   const syncSession = async (token?: string, force = false) => {
@@ -138,7 +160,7 @@ export default function StudentPage() {
         correctAnswer: string | null;
         userSubmission?: any;
         clubs?: Array<{ name: string; score: number }>;
-      }>(`/api/participants/session?token=${encodeURIComponent(tok)}`);
+      }>(`/api/participants/session?token=${encodeURIComponent(tok)}`, undefined, mode);
 
       if (requestId !== sessionRequestRef.current) return;
 
@@ -180,7 +202,11 @@ export default function StudentPage() {
           IT_INNOVATORS: data.clubs.find((club) => club.name === "IT_INNOVATORS")?.score ?? 0,
         });
       }
-    } catch (_) {
+    } catch (err) {
+      if (isSessionExpired(err)) {
+        handleSessionEnded();
+        return;
+      }
       if (requestId === sessionRequestRef.current) setIsSessionLoading(false);
     } finally {
       if (requestId === sessionRequestRef.current) sessionRequestInFlightRef.current = false;
@@ -189,7 +215,7 @@ export default function StudentPage() {
 
   const syncLeaderboard = async () => {
     try {
-      const data = await fetchJson<{ clubs: Array<{ name: string; score: number }> }>("/api/leaderboard");
+      const data = await fetchJson<{ clubs: Array<{ name: string; score: number }> }>("/api/leaderboard", undefined, mode);
       if (data.clubs) {
         setClubScores({
           STACK_PUSH: data.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
@@ -290,10 +316,11 @@ export default function StudentPage() {
           name: regName.trim(),
           club: regClub,
         }),
-      });
+      }, mode);
 
       localStorage.setItem("quizbattle-session", res.participant.sessionToken);
       setSessionToken(res.participant.sessionToken);
+      setSessionEndedMessage(null);
       setParticipant(res.participant);
       syncSession(res.participant.sessionToken, true);
     } catch (err: any) {
@@ -322,7 +349,7 @@ export default function StudentPage() {
           questionId: question.id,
           answer: selectedAnswer,
         }),
-      });
+      }, mode);
 
       setHasSubmitted(true);
       saveCachedAnswer({ questionId: question.id, answer: selectedAnswer, submitted: true });
@@ -333,8 +360,12 @@ export default function StudentPage() {
       syncLeaderboard();
       syncSession(sessionToken, true);
     } catch (err: any) {
-      setErrorMessage(err.message || "Failed to submit answer");
-      syncSession(sessionToken, true);
+      if (isSessionExpired(err)) {
+        handleSessionEnded();
+      } else {
+        setErrorMessage(err.message || "Failed to submit answer");
+        syncSession(sessionToken, true);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -346,6 +377,7 @@ export default function StudentPage() {
       saveCachedAnswer(null);
       setSessionToken("");
       setParticipant(null);
+      setSessionEndedMessage(null);
     }
   };
 
@@ -367,6 +399,40 @@ export default function StudentPage() {
       <div className="app-shell">
         <div className="container-sm" style={{ marginTop: "30px", marginBottom: "40px" }}>
           <div className="glass-card" style={{ padding: "24px" }}>
+            {sessionEndedMessage && (
+              <div
+                style={{
+                  background: "rgba(239, 68, 68, 0.15)",
+                  border: "1.5px solid #ef4444",
+                  borderRadius: "12px",
+                  padding: "14px 16px",
+                  marginBottom: "16px",
+                  textAlign: "center",
+                  color: "#fca5a5",
+                  fontWeight: 800,
+                }}
+              >
+                ⚠️ {sessionEndedMessage}
+              </div>
+            )}
+
+            {mode === "test" && (
+              <div
+                style={{
+                  background: "rgba(245, 158, 11, 0.15)",
+                  border: "1.5px solid #f59e0b",
+                  borderRadius: "12px",
+                  padding: "10px 14px",
+                  marginBottom: "16px",
+                  textAlign: "center",
+                }}
+              >
+                <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "0.95rem", letterSpacing: "0.5px" }}>
+                  🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
+                </span>
+              </div>
+            )}
+
             {/* Epic Battle Banner Image */}
             <div style={{ textAlign: "center", marginBottom: "20px" }}>
               <div
@@ -417,7 +483,7 @@ export default function StudentPage() {
               </div>
 
               <h1 className="brand-title" style={{ fontSize: "1.75rem", margin: "6px 0 2px" }}>
-                IT Club Championship
+                {mode === "test" ? "IT Club Championship — TEST MODE" : "IT Club Championship"}
               </h1>
               <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
                 Stack.push ⚡ vs IT Innovators 🚀 — Live Tech Battle
@@ -472,7 +538,7 @@ export default function StudentPage() {
                 disabled={regLoading || !regName.trim() || !regClub}
                 style={{ fontSize: "1.05rem", padding: "14px" }}
               >
-                {regLoading ? "Entering Battle Arena..." : "ENTER LIVE QUIZ →"}
+                {regLoading ? "Entering Battle Arena..." : mode === "test" ? "ENTER TEST QUIZ →" : "ENTER LIVE QUIZ →"}
               </button>
 
               <div style={{ marginTop: "20px", textAlign: "center", paddingTop: "14px", borderTop: "1px solid var(--border-subtle)" }}>
@@ -512,6 +578,22 @@ export default function StudentPage() {
       )}
 
       <div className="container" style={{ maxWidth: 860, margin: "0 auto" }}>
+        {mode === "test" && (
+          <div
+            style={{
+              background: "rgba(245, 158, 11, 0.18)",
+              border: "2px solid #f59e0b",
+              borderRadius: "12px",
+              padding: "10px 16px",
+              marginBottom: "14px",
+              textAlign: "center",
+            }}
+          >
+            <span style={{ fontWeight: 900, color: "#fcd34d", letterSpacing: "1px" }}>
+              🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
+            </span>
+          </div>
+        )}
         {/* Top Header Card */}
         <div className="glass-card" style={{ marginBottom: "18px", padding: "16px 20px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
@@ -636,7 +718,7 @@ export default function StudentPage() {
 
               {/* Question Text Box */}
               <div className="question-text-box">
-                <div className="question-num-tag">Question {question.questionNumber} of 100</div>
+                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 20 : 100}</div>
                 <div className="question-main-text">{question.questionText}</div>
               </div>
 

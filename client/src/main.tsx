@@ -14,9 +14,14 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/student" element={<StudentPage />} />
         <Route path="/join" element={<StudentPage />} />
         <Route path="/quiz" element={<StudentPage />} />
+        {/* Test mode (20-question practice quiz — fully isolated from the live quiz) */}
+        <Route path="/test" element={<StudentPage mode="test" />} />
         <Route path="/host" element={<AdminPage />} />
         <Route path="/admin" element={<AdminPage />} />
+        <Route path="/admin/test" element={<AdminPage mode="test" />} />
+        <Route path="/host/test" element={<AdminPage mode="test" />} />
         <Route path="/display" element={<DisplayPage />} />
+        <Route path="/test/display" element={<DisplayPage mode="test" />} />
         <Route path="*" element={<StudentPage />} />
       </Routes>
     </BrowserRouter>

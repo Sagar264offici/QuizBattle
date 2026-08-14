@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchJson } from "../services/api";
+import { fetchJson, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
 interface Question {
@@ -33,7 +33,7 @@ interface FastestTap {
   answer: string;
 }
 
-export default function DisplayPage() {
+export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [status, setStatus] = useState("WAITING");
   const [question, setQuestion] = useState<Question | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
@@ -58,12 +58,12 @@ export default function DisplayPage() {
             correctAnswer: string | null;
           };
           currentQuestion: Question | null;
-        }>("/api/quiz-state"),
+        }>("/api/quiz-state", undefined, mode),
         fetchJson<{
           clubs: Array<{ name: string; score: number }>;
           topStudents?: TopStudent[];
           fastestTap?: FastestTap | null;
-        }>("/api/leaderboard"),
+        }>("/api/leaderboard", undefined, mode),
       ]);
 
       setStatus(stateData.session.status);
@@ -151,7 +151,17 @@ export default function DisplayPage() {
           {/* Header Bar */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid var(--border-subtle)", paddingBottom: "18px", flexWrap: "wrap", gap: "10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-              <span className="brand-badge" style={{ fontSize: "1rem", padding: "6px 14px" }}>IT CLUB BATTLE</span>
+              <span
+                className="brand-badge"
+                style={{
+                  fontSize: "1rem",
+                  padding: "6px 14px",
+                  background: mode === "test" ? "#f59e0b" : undefined,
+                  color: mode === "test" ? "#030712" : undefined,
+                }}
+              >
+                {mode === "test" ? "TEST MODE — 20 QUESTIONS" : "IT CLUB BATTLE"}
+              </span>
               <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#e2e8f0" }}>
                 {question?.roundName || "Round 1"}
               </span>
@@ -185,7 +195,7 @@ export default function DisplayPage() {
               )}
 
               <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
-                QUESTION {question.questionNumber} OF 100
+                QUESTION {question.questionNumber} OF {mode === "test" ? 20 : 100}
               </div>
               <div className="projector-question-text">{question.questionText}</div>
 

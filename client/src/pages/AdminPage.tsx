@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { fetchJson, setAdminPassword, clearAdminPassword } from "../services/api";
+import { fetchJson, setAdminPassword, clearAdminPassword, type QuizMode } from "../services/api";
 
 interface Question {
   id: number;
@@ -70,7 +70,7 @@ interface AdminSummary {
   answersPending: number;
 }
 
-export default function AdminPage() {
+export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const stored = sessionStorage.getItem("quizbattle-admin-pw");
     if (stored) {
@@ -122,7 +122,7 @@ export default function AdminPage() {
       const res = await fetchJson<{ ok: boolean; token?: string }>("/api/admin/login", {
         method: "POST",
         body: JSON.stringify({ password }),
-      });
+      }, "live");
       if (res.ok) {
         sessionStorage.setItem("quizbattle-admin-pw", password);
         setIsAuthenticated(true);
@@ -138,7 +138,7 @@ export default function AdminPage() {
   const refreshData = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const sumData = await fetchJson<AdminSummary>("/api/admin/summary");
+      const sumData = await fetchJson<AdminSummary>("/api/admin/summary", undefined, mode);
 
       const prev = summaryRef.current;
       summaryRef.current = sumData;
@@ -162,7 +162,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetchJson<Question[]>("/api/admin/questions")
+    fetchJson<Question[]>("/api/admin/questions", undefined, mode)
       .then((q) => {
         questionsRef.current = q;
         setQuestions(q);
@@ -201,7 +201,7 @@ export default function AdminPage() {
       await fetchJson(endpoint, {
         method: "POST",
         body: JSON.stringify(payload || {}),
-      });
+      }, mode);
       await refreshData();
       if (successMsg) showNotification(successMsg);
     } catch (err: any) {
@@ -212,8 +212,8 @@ export default function AdminPage() {
   };
 
   const copyStudentLink = () => {
-    navigator.clipboard.writeText(`${window.location.origin}/student`);
-    showNotification("📋 Student link copied to clipboard!");
+    navigator.clipboard.writeText(`${window.location.origin}${mode === "test" ? "/test" : "/student"}`);
+    showNotification(mode === "test" ? "📋 Test-mode student link copied to clipboard!" : "📋 Student link copied to clipboard!");
   };
 
   const activeQuestion = useMemo(() => {
@@ -333,14 +333,28 @@ export default function AdminPage() {
         {/* Header */}
         <div className="admin-header-bar">
           <div className="quiz-brand" style={{ margin: 0 }}>
-            <span className="brand-badge" style={{ background: "#2563eb" }}>HOST HUB</span>
-            <span className="brand-title">QuizBattle Command Center</span>
+            <span className="brand-badge" style={{ background: mode === "test" ? "#f59e0b" : "#2563eb" }}>
+              {mode === "test" ? "TEST HUB" : "HOST HUB"}
+            </span>
+            <span className="brand-title">
+              {mode === "test" ? "QuizBattle Command Center — TEST MODE" : "QuizBattle Command Center"}
+            </span>
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            {mode === "live" && (
+              <a href="/admin/test" className="btn btn-warning btn-sm">
+                🧪 Open Test Mode
+              </a>
+            )}
+            {mode === "test" && (
+              <a href="/admin" className="btn btn-secondary btn-sm">
+                ↩ Back to Live Admin
+              </a>
+            )}
             <button className="btn btn-secondary btn-sm" onClick={copyStudentLink}>
               📋 Copy Student Link
             </button>
-            <a href="/display" target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
+            <a href={mode === "test" ? "/test/display" : "/display"} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
               📺 Projector Screen ↗
             </a>
             <button
@@ -355,6 +369,23 @@ export default function AdminPage() {
             </button>
           </div>
         </div>
+
+        {mode === "test" && (
+          <div
+            style={{
+              background: "rgba(245, 158, 11, 0.18)",
+              border: "2px solid #f59e0b",
+              borderRadius: "12px",
+              padding: "12px 16px",
+              marginBottom: "20px",
+              textAlign: "center",
+            }}
+          >
+            <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "1px" }}>
+              🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
+            </span>
+          </div>
+        )}
 
         {/* Live Metrics Row */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "14px", marginBottom: "20px" }}>
@@ -547,13 +578,13 @@ export default function AdminPage() {
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => {
-                      if (confirm("COMPLETE FRESH WIPE — all data and participants cleared?")) {
+                      if (confirm(`COMPLETE FRESH WIPE — all ${mode === "test" ? "test" : "live"} data and participants cleared?`)) {
                         runHostAction("/api/admin/reset-all-fresh", {}, "✨ Everything cleared fresh.");
                       }
                     }}
                     disabled={actionLoading}
                   >
-                    ⚠️ Complete Fresh Wipe (All Data)
+                    ⚠️ Complete Fresh Wipe ({mode === "test" ? "Test Mode" : "Live Mode"})
                   </button>
                   <button
                     className="btn btn-danger btn-sm"
@@ -567,6 +598,36 @@ export default function AdminPage() {
                     🏁 End Quiz
                   </button>
                 </div>
+              </div>
+
+              {/* Student Session Controls */}
+              <div className="danger-zone-box" style={{ marginTop: "14px" }}>
+                <div className="danger-zone-title">🚪 Student Session Controls</div>
+                <p style={{ fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "12px" }}>
+                  {mode === "test"
+                    ? "Immediately log out every test student. Old test sessions become invalid on the server."
+                    : "Immediately log out every student currently in the quiz. Old student sessions become invalid on the server — the quiz and question database are NOT affected."}
+                </p>
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => {
+                    const msg =
+                      mode === "test"
+                        ? "Are you sure you want to log out all test students?"
+                        : "Are you sure you want to log out all students?";
+                    if (confirm(msg)) {
+                      runHostAction(
+                        "/api/admin/logout-all-students",
+                        {},
+                        mode === "test" ? "🚪 All test students logged out." : "🚪 All students logged out.",
+                      );
+                    }
+                  }}
+                  disabled={actionLoading}
+                  style={{ fontWeight: 900 }}
+                >
+                  {mode === "test" ? "🚪 Log Out All Test Students" : "🚪 Log Out All Students"}
+                </button>
               </div>
             </div>
 
@@ -718,12 +779,12 @@ export default function AdminPage() {
             <div className="glass-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Question Browser</h3>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>100 Questions</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "20 Questions" : "100 Questions"}</span>
               </div>
 
               <div className="round-filter-tabs">
                 {[
-                  { label: "All (100)", value: "all" },
+                  { label: mode === "test" ? "All (20)" : "All (100)", value: "all" },
                   { label: "R1: Basics", value: "1" },
                   { label: "R2: Web", value: "2" },
                   { label: "R3: Coding", value: "3" },

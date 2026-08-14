@@ -6,6 +6,7 @@
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
+import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData.js";
 export interface QuestionItem {
   id: number;
   questionNumber: number;
@@ -1439,35 +1440,94 @@ const DEFAULT_STATE: QuizSessionState = {
   updatedAt: new Date().toISOString(),
 };
 
-function getQuestion(qNum: number) {
-  return QUESTIONS.find(q => q.questionNumber === qNum) ?? QUESTIONS[0];
+// ── Quiz Modes ────────────────────────────────────────────────────────────────
+
+export type QuizMode = "live" | "test";
+
+function quizKeys(mode: QuizMode) {
+  const isTest = mode === "test";
+  return {
+    state: isTest ? "quiz:test:state" : "quiz:state",
+    participantsMap: isTest ? "quiz:test:participantsMap" : "quiz:participantsMap",
+    participantTokens: isTest ? "quiz:test:participantTokens" : "quiz:participantTokens",
+    nextId: isTest ? "quiz:test:nextParticipantId" : "quiz:nextParticipantId",
+    sessionGen: isTest ? "quiz:test:sessionGen" : "quiz:sessionGen",
+    participantKey: (token: string) => (isTest ? `pt:${token}` : `p:${token}`),
+    submission: (pid: number, qid: number) => (isTest ? `sub:test:${pid}:${qid}` : `sub:${pid}:${qid}`),
+    clubScore: (club: string) => (isTest ? `score:test:${club}` : `score:${club}`),
+    fastest: (qid: number) => (isTest ? `fastest:test:${qid}` : `fastest:${qid}`),
+    fastestLatest: isTest ? "fastest:test:latest" : "fastest:latest",
+  };
 }
 
-function encodeToken(p: { id: number; name: string; club: string }): string {
-  return Buffer.from(JSON.stringify({ id: p.id, name: p.name, club: p.club, t: Date.now() })).toString("base64url");
+function getQuestionSet(mode: QuizMode): QuestionItem[] {
+  return mode === "test" ? TEST_QUESTIONS : QUESTIONS;
 }
 
-function decodeToken(token: string): { id: number; name: string; club: string } | null {
+function getQuestionCount(mode: QuizMode): number {
+  return getQuestionSet(mode).length;
+}
+
+function getQuestionIds(mode: QuizMode): number[] {
+  return getQuestionSet(mode).map((q) => q.id);
+}
+
+function getQuestion(qNum: number, mode: QuizMode = "live") {
+  const set = getQuestionSet(mode);
+  return set.find((q) => q.questionNumber === qNum) ?? set[0];
+}
+
+// ── Session Tokens (carry the per-mode session generation) ───────────────────
+
+function encodeToken(p: { id: number; name: string; club: string; gen: number }): string {
+  return Buffer.from(JSON.stringify({ id: p.id, name: p.name, club: p.club, gen: p.gen, t: Date.now() })).toString("base64url");
+}
+
+function decodeToken(token: string): { id: number; name: string; club: string; gen: number } | null {
   if (!token) return null;
-  try {
-    const raw = Buffer.from(token, "base64url").toString("utf8");
-    const d = JSON.parse(raw);
-    if (d?.name && d?.club) return { id: Number(d.id) || 1, name: String(d.name), club: String(d.club) };
-  } catch (_) {}
-  try {
-    const raw = Buffer.from(token, "base64").toString("utf8");
-    const d = JSON.parse(raw);
-    if (d?.name && d?.club) return { id: Number(d.id) || 1, name: String(d.name), club: String(d.club) };
-  } catch (_) {}
+  for (const encoding of ["base64url", "base64"] as const) {
+    try {
+      const raw = Buffer.from(token, encoding).toString("utf8");
+      const d = JSON.parse(raw);
+      if (d?.name && d?.club) {
+        return { id: Number(d.id) || 1, name: String(d.name), club: String(d.club), gen: Number(d.gen) || 0 };
+      }
+    } catch (_) {}
+  }
   return null;
 }
 
-// ── State Management (Redis-backed) ──────────────────────────────────────────
+// ── Session Generation (server-side global student logout) ───────────────────
+// Every mode keeps a "current session generation". Student tokens are minted
+// with the generation active at registration time. When the host logs out all
+// students, the generation is bumped and every token from an older generation
+// becomes invalid server-side — an old localStorage token can never re-enter.
 
-async function getState(): Promise<QuizSessionState> {
-  const raw = await redis.get<string>("quiz:state");
+async function getSessionGen(mode: QuizMode): Promise<number> {
+  const raw = await redis.get<string>(quizKeys(mode).sessionGen);
+  const n = raw ? parseInt(String(raw), 10) : 0;
+  return n > 0 ? n : 1;
+}
+
+async function bumpSessionGen(mode: QuizMode): Promise<number> {
+  const key = quizKeys(mode).sessionGen;
+  const current = await getSessionGen(mode);
+  const gen = Math.max(Date.now(), current + 1);
+  await redis.set(key, String(gen));
+  return gen;
+}
+
+// ── State Management (Redis-backed, scoped per mode) ─────────────────────────
+
+async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
+  const raw = await redis.get<string>(quizKeys(mode).state);
   if (!raw) return { ...DEFAULT_STATE };
-  const state: QuizSessionState = typeof raw === "string" ? JSON.parse(raw) : raw;
+  let state: QuizSessionState;
+  try {
+    state = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch (_) {
+    return { ...DEFAULT_STATE };
+  }
 
   // 1. Auto-transition COUNTDOWN (3s) -> LIVE (30s)
   if (state.status === "COUNTDOWN" && state.countdownEndsAt) {
@@ -1478,7 +1538,7 @@ async function getState(): Promise<QuizSessionState> {
       state.questionEndsAt = new Date(Date.now() + 30 * 1000).toISOString();
       state.durationSeconds = 30;
       state.updatedAt = new Date().toISOString();
-      await redis.set("quiz:state", JSON.stringify(state));
+      await redis.set(quizKeys(mode).state, JSON.stringify(state));
     }
   }
 
@@ -1487,17 +1547,17 @@ async function getState(): Promise<QuizSessionState> {
     if (new Date(state.questionEndsAt).getTime() <= Date.now()) {
       state.status = "LOCKED";
       state.updatedAt = new Date().toISOString();
-      await redis.set("quiz:state", JSON.stringify(state));
+      await redis.set(quizKeys(mode).state, JSON.stringify(state));
     }
   }
 
   return state;
 }
 
-async function setState(patch: Partial<QuizSessionState>): Promise<QuizSessionState> {
-  const current = await getState();
+async function setState(mode: QuizMode, patch: Partial<QuizSessionState>): Promise<QuizSessionState> {
+  const current = await getState(mode);
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
-  await redis.set("quiz:state", JSON.stringify(next));
+  await redis.set(quizKeys(mode).state, JSON.stringify(next));
   return next;
 }
 
@@ -1540,70 +1600,175 @@ function parseHGetAll(res: any): any[] {
   return [];
 }
 
-async function getParticipant(token: string) {
+async function getParticipant(token: string, mode: QuizMode = "live") {
+  const currentGen = await getSessionGen(mode);
+  const keys = quizKeys(mode);
+
   // 1. Check Hash
-  const hashRaw = await redisCommand(["HGET", "quiz:participantsMap", token]);
+  const hashRaw = await redisCommand(["HGET", keys.participantsMap, token]);
   if (hashRaw) {
     try {
       const p = typeof hashRaw === "string" ? JSON.parse(hashRaw) : hashRaw;
-      if (p?.name) return p;
-    } catch (_) {}
-  }
-  // 2. Check Key
-  const raw = await redis.get<string>(`p:${token}`);
-  if (raw) {
-    try {
-      const p = typeof raw === "string" ? JSON.parse(raw) : raw;
       if (p?.name) {
-        await redisCommand(["HSET", "quiz:participantsMap", token, JSON.stringify(p)]);
+        if ((Number(p.gen) || 0) !== currentGen) return null;
         return p;
       }
     } catch (_) {}
   }
-  // 3. Fallback: decode token
+  // 2. Check Key
+  const raw = await redis.get<string>(keys.participantKey(token));
+  if (raw) {
+    try {
+      const p = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (p?.name) {
+        if ((Number(p.gen) || 0) !== currentGen) return null;
+        await redisCommand(["HSET", keys.participantsMap, token, JSON.stringify(p)]);
+        return p;
+      }
+    } catch (_) {}
+  }
+  // 3. Fallback: decode token (only valid for the current session generation)
   const d = decodeToken(token);
-  if (d) {
+  if (d && d.gen === currentGen) {
     const p = {
       id: d.id,
       name: d.name,
       club: d.club,
       sessionToken: token,
+      gen: d.gen,
       score: 0,
       correctCount: 0,
       attemptCount: 0,
       joinedAt: new Date().toISOString(),
     };
-    await saveParticipant(p);
+    await saveParticipant(p, mode);
     return p;
   }
   return null;
 }
 
-async function saveParticipant(p: any) {
+async function saveParticipant(p: any, mode: QuizMode = "live") {
+  const keys = quizKeys(mode);
   const jsonStr = JSON.stringify(p);
-  await redis.set(`p:${p.sessionToken}`, jsonStr, { ex: 86400 });
-  await redisCommand(["HSET", "quiz:participantsMap", p.sessionToken, jsonStr]);
+  await redis.set(keys.participantKey(p.sessionToken), jsonStr, { ex: 86400 });
+  await redisCommand(["HSET", keys.participantsMap, p.sessionToken, jsonStr]);
+  await redisCommand(["SADD", keys.participantTokens, p.sessionToken]);
 }
 
-async function getSubmission(pid: number, qid: number) {
-  const raw = await redis.get<string>(`sub:${pid}:${qid}`);
+async function getSubmission(pid: number, qid: number, mode: QuizMode = "live") {
+  const raw = await redis.get<string>(quizKeys(mode).submission(pid, qid));
   if (!raw) return null;
   try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
 }
 
-async function saveSubmission(sub: any) {
-  await redis.set(`sub:${sub.participantId}:${sub.questionId}`, JSON.stringify(sub), { ex: 86400 });
+async function saveSubmission(sub: any, mode: QuizMode = "live") {
+  await redis.set(quizKeys(mode).submission(sub.participantId, sub.questionId), JSON.stringify(sub), { ex: 86400 });
 }
 
-async function getClubScore(club: string): Promise<number> {
-  const v = await redis.get<string>(`score:${club}`);
+async function getClubScore(club: string, mode: QuizMode = "live"): Promise<number> {
+  const v = await redis.get<string>(quizKeys(mode).clubScore(club));
   return v ? parseInt(String(v), 10) || 0 : 0;
 }
 
-async function addClubScore(club: string, pts: number) {
+async function addClubScore(club: string, pts: number, mode: QuizMode = "live") {
   if (pts > 0) {
-    await redis.incrby(`score:${club}`, pts);
+    await redis.incrby(quizKeys(mode).clubScore(club), pts);
   }
+}
+
+// ── Mode-scoped data cleanup ─────────────────────────────────────────────────
+
+async function delKeys(keys: string[]) {
+  const BATCH = 400;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const chunk = keys.slice(i, i + BATCH);
+    if (chunk.length > 0) {
+      await redisCommand(["DEL", ...chunk]);
+    }
+  }
+}
+
+async function clearModeData(mode: QuizMode) {
+  const keys = quizKeys(mode);
+  const rawMap = await redisCommand(["HGETALL", keys.participantsMap]);
+  const mapParticipants = parseHGetAll(rawMap);
+  const rawTokens = (await redisCommand(["SMEMBERS", keys.participantTokens])) || [];
+  const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+
+  const ids = new Set<number>();
+  for (const p of mapParticipants) if (p?.id) ids.add(Number(p.id));
+  for (const tok of tokens) {
+    const p = mapParticipants.find((x) => x?.sessionToken === tok);
+    if (p?.id) ids.add(Number(p.id));
+  }
+
+  const toDelete: string[] = [];
+  for (const id of ids) {
+    for (const qid of getQuestionIds(mode)) {
+      toDelete.push(keys.submission(id, qid));
+    }
+  }
+  for (const tok of tokens) toDelete.push(keys.participantKey(tok));
+  await delKeys(toDelete);
+
+  await redisCommand(["DEL", keys.participantsMap, keys.participantTokens]);
+  await redis.set(keys.clubScore("STACK_PUSH"), "0");
+  await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
+  await redisCommand(["DEL", keys.state, keys.nextId, keys.sessionGen]);
+  await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
+  await redisCommand(["DEL", keys.fastestLatest]);
+}
+
+// Log out every student in a mode: bump the session generation (invalidating
+// every existing token), remove participant records/roster/submissions, and
+// zero the club scores derived from those participants. Quiz state (status /
+// current question) is intentionally left untouched.
+async function logoutAllStudents(mode: QuizMode) {
+  const keys = quizKeys(mode);
+  const gen = await bumpSessionGen(mode);
+
+  const rawMap = await redisCommand(["HGETALL", keys.participantsMap]);
+  const mapParticipants = parseHGetAll(rawMap);
+  const rawTokens = (await redisCommand(["SMEMBERS", keys.participantTokens])) || [];
+  const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+
+  const allTokens = new Set<string>();
+  for (const p of mapParticipants) if (p?.sessionToken) allTokens.add(p.sessionToken);
+  for (const t of tokens) allTokens.add(t);
+
+  const ids = new Set<number>();
+  for (const p of mapParticipants) if (p?.id) ids.add(Number(p.id));
+
+  const toDelete: string[] = [];
+  for (const id of ids) {
+    for (const qid of getQuestionIds(mode)) {
+      toDelete.push(keys.submission(id, qid));
+    }
+  }
+  for (const tok of allTokens) toDelete.push(keys.participantKey(tok));
+  await delKeys(toDelete);
+
+  await redisCommand(["DEL", keys.participantsMap, keys.participantTokens]);
+  await redis.set(keys.clubScore("STACK_PUSH"), "0");
+  await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
+  await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
+  await redisCommand(["DEL", keys.fastestLatest]);
+
+  return gen;
+}
+
+// ── Sanitizers: never send correct answers / scoring internals to students ──
+
+function sanitizeQuestion(q: QuestionItem | null | undefined) {
+  if (!q) return null;
+  const { correctAnswer, ...safe } = q;
+  return safe;
+}
+
+function sanitizeSubmission(sub: any) {
+  if (!sub) return sub;
+  const { isCorrect, pointsAwarded, ...safe } = sub;
+  return safe;
 }
 
 // ── Express App ───────────────────────────────────────────────────────────────
@@ -1634,18 +1799,18 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 
 const r = express.Router();
 
-// ── Health ────────────────────────────────────────────────────────────────────
+// ── Health (shared across modes) ──────────────────────────────────────────────
 r.get("/health", async (_req, res) => {
   try {
     const pong = await redis.ping();
-    const s = await getState();
+    const s = await getState("live");
     res.json({ ok: true, status: s.status, redis: pong });
   } catch (e: any) {
     res.json({ ok: false, redis: false, error: e.message });
   }
 });
 
-// ── Admin Auth ────────────────────────────────────────────────────────────────
+// ── Admin Auth (shared across modes) ─────────────────────────────────────────
 r.post("/admin/login", (req, res) => {
   const { password } = req.body ?? {};
   if (!password || !bcrypt.compareSync(String(password), ADMIN_HASH)) {
@@ -1654,374 +1819,406 @@ r.post("/admin/login", (req, res) => {
   res.json({ ok: true, token: ADMIN_PW });
 });
 
-// ── Admin Actions ─────────────────────────────────────────────────────────────
-r.post("/admin/start-countdown", requireAdmin, async (req, res) => {
-  const { questionNumber } = req.body ?? {};
-  const q = getQuestion(Number(questionNumber) || (await getState()).currentQuestionId || 1);
-  const now = Date.now();
-  const endsAt = new Date(now + 3000).toISOString();
-  const qEndsAt = new Date(now + 33000).toISOString();
-  const state = await setState({
-    status: "COUNTDOWN",
-    currentQuestionId: q.questionNumber,
-    countdownEndsAt: endsAt,
-    questionEndsAt: qEndsAt,
-    durationSeconds: 30,
-    questionStartedAt: null,
-    correctAnswer: null,
+/**
+ * Register every quiz route for one mode. The live quiz uses prefix "" and
+ * mode "live"; the test mode uses prefix "/test" and mode "test". Both modes
+ * share the exact same engine/handlers but are scoped to their own Redis
+ * namespace and session generation, so they can never interfere with each
+ * other.
+ */
+function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMode) {
+  // ── Admin Actions ───────────────────────────────────────────────────────────
+  router.post(`${prefix}/admin/start-countdown`, requireAdmin, async (req, res) => {
+    const { questionNumber } = req.body ?? {};
+    const q = getQuestion(Number(questionNumber) || (await getState(mode)).currentQuestionId || 1, mode);
+    const now = Date.now();
+    const endsAt = new Date(now + 3000).toISOString();
+    const qEndsAt = new Date(now + 33000).toISOString();
+    const state = await setState(mode, {
+      status: "COUNTDOWN",
+      currentQuestionId: q.questionNumber,
+      countdownEndsAt: endsAt,
+      questionEndsAt: qEndsAt,
+      durationSeconds: 30,
+      questionStartedAt: null,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, state });
   });
-  res.json({ ok: true, state });
-});
 
-r.post("/admin/start-question", requireAdmin, async (req, res) => {
-  const { questionNumber } = req.body ?? {};
-  const q = getQuestion(Number(questionNumber) || (await getState()).currentQuestionId || 1);
-  const now = Date.now();
-  const state = await setState({
-    status: "LIVE",
-    currentQuestionId: q.questionNumber,
-    questionStartedAt: new Date(now).toISOString(),
-    countdownEndsAt: null,
-    questionEndsAt: new Date(now + 30000).toISOString(),
-    durationSeconds: 30,
-    correctAnswer: null,
+  router.post(`${prefix}/admin/start-question`, requireAdmin, async (req, res) => {
+    const { questionNumber } = req.body ?? {};
+    const q = getQuestion(Number(questionNumber) || (await getState(mode)).currentQuestionId || 1, mode);
+    const now = Date.now();
+    const state = await setState(mode, {
+      status: "LIVE",
+      currentQuestionId: q.questionNumber,
+      questionStartedAt: new Date(now).toISOString(),
+      countdownEndsAt: null,
+      questionEndsAt: new Date(now + 30000).toISOString(),
+      durationSeconds: 30,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, state });
   });
-  res.json({ ok: true, state });
-});
 
-r.post("/admin/lock-answers", requireAdmin, async (_req, res) => {
-  const state = await setState({ status: "LOCKED" });
-  res.json({ ok: true, state });
-});
-
-r.post("/admin/reveal-answer", requireAdmin, async (_req, res) => {
-  const cur = await getState();
-  const q = getQuestion(cur.currentQuestionId);
-  const state = await setState({ status: "REVEALED", correctAnswer: q?.correctAnswer ?? null });
-  res.json({ ok: true, state, correctAnswer: state.correctAnswer });
-});
-
-r.post("/admin/next-question", requireAdmin, async (req, res) => {
-  const cur = await getState();
-  const { questionNumber } = req.body ?? {};
-  const next = questionNumber ? Number(questionNumber) : Math.min((cur.currentQuestionId || 1) + 1, 100);
-  const state = await setState({
-    status: "WAITING",
-    currentQuestionId: next,
-    questionStartedAt: null,
-    countdownEndsAt: null,
-    questionEndsAt: null,
-    correctAnswer: null,
+  router.post(`${prefix}/admin/lock-answers`, requireAdmin, async (_req, res) => {
+    const state = await setState(mode, { status: "LOCKED" });
+    res.json({ ok: true, state });
   });
-  res.json({ ok: true, state });
-});
 
-r.post("/admin/prev-question", requireAdmin, async (_req, res) => {
-  const cur = await getState();
-  const prev = Math.max((cur.currentQuestionId || 1) - 1, 1);
-  const state = await setState({
-    status: "WAITING",
-    currentQuestionId: prev,
-    questionStartedAt: null,
-    countdownEndsAt: null,
-    questionEndsAt: null,
-    correctAnswer: null,
+  router.post(`${prefix}/admin/reveal-answer`, requireAdmin, async (_req, res) => {
+    const cur = await getState(mode);
+    const q = getQuestion(cur.currentQuestionId, mode);
+    const state = await setState(mode, { status: "REVEALED", correctAnswer: q?.correctAnswer ?? null });
+    res.json({ ok: true, state, correctAnswer: state.correctAnswer });
   });
-  res.json({ ok: true, state });
-});
 
-r.post("/admin/select-question", requireAdmin, async (req, res) => {
-  const { questionNumber } = req.body ?? {};
-  if (!questionNumber) return res.status(400).json({ error: "questionNumber required" });
-  const state = await setState({
-    status: "WAITING",
-    currentQuestionId: Number(questionNumber),
-    questionStartedAt: null,
-    countdownEndsAt: null,
-    questionEndsAt: null,
-    correctAnswer: null,
+  router.post(`${prefix}/admin/next-question`, requireAdmin, async (req, res) => {
+    const cur = await getState(mode);
+    const { questionNumber } = req.body ?? {};
+    const next = questionNumber ? Number(questionNumber) : Math.min((cur.currentQuestionId || 1) + 1, getQuestionCount(mode));
+    const state = await setState(mode, {
+      status: "WAITING",
+      currentQuestionId: next,
+      questionStartedAt: null,
+      countdownEndsAt: null,
+      questionEndsAt: null,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, state });
   });
-  res.json({ ok: true, state });
-});
 
-r.post("/admin/reset-scores", requireAdmin, async (_req, res) => {
-  await redis.set("score:STACK_PUSH", "0");
-  await redis.set("score:IT_INNOVATORS", "0");
+  router.post(`${prefix}/admin/prev-question`, requireAdmin, async (_req, res) => {
+    const cur = await getState(mode);
+    const prev = Math.max((cur.currentQuestionId || 1) - 1, 1);
+    const state = await setState(mode, {
+      status: "WAITING",
+      currentQuestionId: prev,
+      questionStartedAt: null,
+      countdownEndsAt: null,
+      questionEndsAt: null,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, state });
+  });
 
-  const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
-  const tokens = Array.isArray(rawTokens) ? rawTokens : [];
-  for (const tok of tokens) {
-    const p = await getParticipant(tok);
-    if (p) {
-      p.score = 0;
-      p.correctCount = 0;
-      p.attemptCount = 0;
-      await redis.set(`p:${p.sessionToken}`, JSON.stringify(p), { ex: 86400 });
-      for (let q = 1; q <= 100; q++) {
-        await redisCommand(["DEL", `sub:${p.id}:${q}`]);
+  router.post(`${prefix}/admin/select-question`, requireAdmin, async (req, res) => {
+    const { questionNumber } = req.body ?? {};
+    if (!questionNumber) return res.status(400).json({ error: "questionNumber required" });
+    const state = await setState(mode, {
+      status: "WAITING",
+      currentQuestionId: Number(questionNumber),
+      questionStartedAt: null,
+      countdownEndsAt: null,
+      questionEndsAt: null,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, state });
+  });
+
+  router.post(`${prefix}/admin/reset-scores`, requireAdmin, async (_req, res) => {
+    const keys = quizKeys(mode);
+    await redis.set(keys.clubScore("STACK_PUSH"), "0");
+    await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
+
+    const rawTokens = (await redisCommand(["SMEMBERS", keys.participantTokens])) || [];
+    const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+    for (const tok of tokens) {
+      const p = await getParticipant(tok, mode);
+      if (p) {
+        p.score = 0;
+        p.correctCount = 0;
+        p.attemptCount = 0;
+        await redis.set(keys.participantKey(p.sessionToken), JSON.stringify(p), { ex: 86400 });
+        for (const qid of getQuestionIds(mode)) {
+          await redisCommand(["DEL", keys.submission(p.id, qid)]);
+        }
       }
     }
-  }
 
-  const state = await setState({
-    status: "WAITING",
-    currentQuestionId: 1,
-    questionStartedAt: null,
-    countdownEndsAt: null,
-    questionEndsAt: null,
-    correctAnswer: null,
+    const state = await setState(mode, {
+      status: "WAITING",
+      currentQuestionId: 1,
+      questionStartedAt: null,
+      countdownEndsAt: null,
+      questionEndsAt: null,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, message: "Scores and responses reset successfully. Participants retained.", state });
   });
-  res.json({ ok: true, message: "Scores and responses reset successfully. Participants retained.", state });
-});
 
-r.post("/admin/reset-all-fresh", requireAdmin, async (_req, res) => {
-  try { await redis.flushdb(); } catch (_) {}
-  await redis.set("score:STACK_PUSH", "0");
-  await redis.set("score:IT_INNOVATORS", "0");
-  await redis.set("quiz:nextParticipantId", "1");
-  const state = await setState({
-    status: "WAITING",
-    currentQuestionId: 1,
-    questionStartedAt: null,
-    countdownEndsAt: null,
-    questionEndsAt: null,
-    correctAnswer: null,
+  router.post(`${prefix}/admin/reset-all-fresh`, requireAdmin, async (_req, res) => {
+    await clearModeData(mode);
+    await redis.set(quizKeys(mode).nextId, "1");
+    await bumpSessionGen(mode);
+    const state = await setState(mode, {
+      status: "WAITING",
+      currentQuestionId: 1,
+      questionStartedAt: null,
+      countdownEndsAt: null,
+      questionEndsAt: null,
+      correctAnswer: null,
+    });
+    res.json({ ok: true, message: "All data cleared", state });
   });
-  res.json({ ok: true, message: "All data cleared", state });
-});
 
-r.post("/admin/end-quiz", requireAdmin, async (_req, res) => {
-  const state = await setState({ status: "FINISHED" });
-  res.json({ ok: true, state });
-});
+  router.post(`${prefix}/admin/end-quiz`, requireAdmin, async (_req, res) => {
+    const state = await setState(mode, { status: "FINISHED" });
+    res.json({ ok: true, state });
+  });
 
-r.get("/admin/summary", requireAdmin, async (_req, res) => {
-  const state = await getState();
-  const currentQ = getQuestion(state.currentQuestionId);
-  const stackScore = await getClubScore("STACK_PUSH");
-  const innovScore = await getClubScore("IT_INNOVATORS");
+  router.post(`${prefix}/admin/logout-all-students`, requireAdmin, async (_req, res) => {
+    const gen = await logoutAllStudents(mode);
+    res.json({ ok: true, message: "All students logged out. Their sessions are now invalid.", sessionGeneration: gen });
+  });
 
-  // Get all registered participants from Hash (with fallback to set)
-  const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
-  let participants: any[] = parseHGetAll(rawMap);
+  router.get(`${prefix}/admin/summary`, requireAdmin, async (_req, res) => {
+    const state = await getState(mode);
+    const currentQ = getQuestion(state.currentQuestionId, mode);
+    const stackScore = await getClubScore("STACK_PUSH", mode);
+    const innovScore = await getClubScore("IT_INNOVATORS", mode);
 
-  if (participants.length === 0) {
-    const rawTokens = (await redisCommand(["SMEMBERS", "quiz:participantTokens"])) || [];
-    const tokens = Array.isArray(rawTokens) ? rawTokens : [];
-    participants = (
+    // Get all registered participants from Hash (with fallback to set)
+    const rawMap = await redisCommand(["HGETALL", quizKeys(mode).participantsMap]);
+    let participants: any[] = parseHGetAll(rawMap);
+
+    if (participants.length === 0) {
+      const rawTokens = (await redisCommand(["SMEMBERS", quizKeys(mode).participantTokens])) || [];
+      const tokens = Array.isArray(rawTokens) ? rawTokens : [];
+      participants = (
+        await Promise.all(
+          tokens.map(async (tok) => {
+            try {
+              return await getParticipant(tok, mode);
+            } catch (_) {
+              return null;
+            }
+          })
+        )
+      ).filter((p: any) => p && p.name);
+    }
+
+    // Deduplicate participants
+    const seen = new Set<string | number>();
+    participants = participants.filter((p) => {
+      const key = p.sessionToken || p.id || p.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const currentSubmissions: any[] = (
       await Promise.all(
-        tokens.map(async (tok) => {
+        participants.map(async (p) => {
           try {
-            return await getParticipant(tok);
+            return await getSubmission(p.id, currentQ.id, mode);
           } catch (_) {
             return null;
           }
         })
       )
-    ).filter((p: any) => p && p.name);
-  }
+    ).filter(Boolean);
 
-  // Deduplicate participants
-  const seen = new Set<string | number>();
-  participants = participants.filter((p) => {
-    const key = p.sessionToken || p.id || p.name;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
+    const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
+
+    res.json({
+      session: { ...state, currentQuestion: currentQ },
+      currentQuestionId: state.currentQuestionId,
+      clubs: [
+        { name: "STACK_PUSH", score: stackScore },
+        { name: "IT_INNOVATORS", score: innovScore },
+      ],
+      participants,
+      participantsCount: participants.length,
+      stackParticipants,
+      innovatorsParticipants,
+      stackCount: stackParticipants.length,
+      innovatorsCount: innovatorsParticipants.length,
+      currentSubmissions,
+      answersReceived: currentSubmissions.length,
+      answersPending: Math.max(0, participants.length - currentSubmissions.length),
+    });
   });
 
-  const currentSubmissions: any[] = (
-    await Promise.all(
-      participants.map(async (p) => {
-        try {
-          return await getSubmission(p.id, currentQ.id);
-        } catch (_) {
-          return null;
-        }
-      })
-    )
-  ).filter(Boolean);
-
-  const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
-  const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
-
-  res.json({
-    session: { ...state, currentQuestion: currentQ },
-    currentQuestionId: state.currentQuestionId,
-    clubs: [
-      { name: "STACK_PUSH", score: stackScore },
-      { name: "IT_INNOVATORS", score: innovScore },
-    ],
-    participants,
-    participantsCount: participants.length,
-    stackParticipants,
-    innovatorsParticipants,
-    stackCount: stackParticipants.length,
-    innovatorsCount: innovatorsParticipants.length,
-    currentSubmissions,
-    answersReceived: currentSubmissions.length,
-    answersPending: Math.max(0, participants.length - currentSubmissions.length),
+  router.get(`${prefix}/admin/questions`, requireAdmin, (_req, res) => {
+    res.json(getQuestionSet(mode));
   });
-});
 
-r.get("/admin/questions", requireAdmin, (_req, res) => {
-  res.json(QUESTIONS);
-});
-
-// ── Public Endpoints ──────────────────────────────────────────────────────────
-r.get("/quiz-state", async (_req, res) => {
-  const state = await getState();
-  const currentQ = getQuestion(state.currentQuestionId);
-  res.json({ session: { ...state, currentQuestion: currentQ }, currentQuestion: currentQ });
-});
-
-r.get("/leaderboard", async (_req, res) => {
-  const s = await getClubScore("STACK_PUSH");
-  const i = await getClubScore("IT_INNOVATORS");
-
-  // Top 3 Students of All Time
-  const rawMap = await redisCommand(["HGETALL", "quiz:participantsMap"]);
-  const participants = parseHGetAll(rawMap);
-  const topStudents = [...participants]
-    .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.correctCount || 0) - (a.correctCount || 0))
-    .slice(0, 3)
-    .map((p, idx) => ({
-      rank: idx + 1,
-      id: p.id,
-      name: p.name,
-      club: p.club,
-      score: p.score || 0,
-      correctCount: p.correctCount || 0,
-    }));
-
-  const state = await getState();
-  let fastestTap = null;
-  const rawFastest = (await redis.get<string>(`fastest:${state.currentQuestionId}`)) || (await redis.get<string>("fastest:latest"));
-  if (rawFastest) {
-    try {
-      fastestTap = typeof rawFastest === "string" ? JSON.parse(rawFastest) : rawFastest;
-    } catch (_) {}
-  }
-
-  res.json({
-    clubs: [
-      { name: "STACK_PUSH", score: s },
-      { name: "IT_INNOVATORS", score: i },
-    ],
-    topStudents,
-    fastestTap,
+  // ── Public Endpoints ────────────────────────────────────────────────────────
+  router.get(`${prefix}/quiz-state`, async (_req, res) => {
+    const state = await getState(mode);
+    const currentQ = getQuestion(state.currentQuestionId, mode);
+    res.json({ session: { ...state, currentQuestion: sanitizeQuestion(currentQ) }, currentQuestion: sanitizeQuestion(currentQ) });
   });
-});
 
-// ── Registration ──────────────────────────────────────────────────────────────
-r.post("/participants/register", async (req, res) => {
-  try {
-    const { name, club } = req.body ?? {};
-    const n = String(name || "").trim();
-    if (!n) return res.status(400).json({ error: "Name is required" });
-    if (!isValidClub(String(club || ""))) return res.status(400).json({ error: "Valid club required" });
+  router.get(`${prefix}/leaderboard`, async (_req, res) => {
+    const s = await getClubScore("STACK_PUSH", mode);
+    const i = await getClubScore("IT_INNOVATORS", mode);
 
-    const nextId = await redis.incr("quiz:nextParticipantId");
-    const id = Number(nextId) || Date.now();
+    // Top 3 Students of All Time
+    const rawMap = await redisCommand(["HGETALL", quizKeys(mode).participantsMap]);
+    const participants = parseHGetAll(rawMap);
+    const topStudents = [...participants]
+      .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.correctCount || 0) - (a.correctCount || 0))
+      .slice(0, 3)
+      .map((p, idx) => ({
+        rank: idx + 1,
+        id: p.id,
+        name: p.name,
+        club: p.club,
+        score: p.score || 0,
+        correctCount: p.correctCount || 0,
+      }));
 
-    const token = encodeToken({ id, name: n, club: String(club) });
-    const participant = { id, name: n, club, sessionToken: token, score: 0, correctCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
-    await saveParticipant(participant);
-    res.json({ ok: true, participant });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || "Registration failed" });
-  }
-});
-
-// ── Student Session Poll ──────────────────────────────────────────────────────
-r.get("/participants/session", async (req, res) => {
-  const token = String(req.query.token ?? "");
-  if (!token) return res.status(400).json({ error: "Missing token" });
-
-  const participant = await getParticipant(token);
-  if (!participant) return res.status(404).json({ error: "Participant not found" });
-
-  const state = await getState();
-  const currentQ = getQuestion(state.currentQuestionId);
-  const submission = await getSubmission(participant.id, currentQ.id);
-  const showQuestion = state.status === "LIVE" || state.status === "LOCKED" || state.status === "REVEALED";
-
-  res.json({
-    participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, attemptCount: participant.attemptCount, sessionToken: participant.sessionToken },
-    hasSubmitted: !!submission,
-    userSubmission: submission,
-    currentQuestion: showQuestion ? currentQ : null,
-    sessionStatus: state.status,
-    countdownEndsAt: state.countdownEndsAt,
-    questionEndsAt: state.questionEndsAt,
-    durationSeconds: state.durationSeconds || 30,
-    correctAnswer: state.status === "REVEALED" ? state.correctAnswer : null,
-  });
-});
-
-// ── Answer Submission ─────────────────────────────────────────────────────────
-r.post("/questions/submit", async (req, res) => {
-  try {
-    const { token, answer, questionId } = req.body ?? {};
-    const participant = await getParticipant(String(token || ""));
-    if (!participant) return res.status(404).json({ error: "Participant not found" });
-
-    const state = await getState();
-    if (state.status !== "LIVE") return res.status(400).json({ error: "Question is not live" });
-
-    const currentQ = getQuestion(state.currentQuestionId);
-    if (!currentQ || currentQ.id !== Number(questionId)) return res.status(400).json({ error: "Wrong question" });
-
-    const a = String(answer || "").trim().toUpperCase();
-    if (!["A", "B", "C", "D"].includes(a)) return res.status(400).json({ error: "Answer must be A/B/C/D" });
-
-    const existing = await getSubmission(participant.id, currentQ.id);
-    if (existing) return res.status(400).json({ error: "Already submitted" });
-
-    const now = Date.now();
-    const startedAt = state.questionStartedAt ? new Date(state.questionStartedAt).getTime() : now;
-    const { isCorrect, pointsAwarded } = evaluateSubmission(a, currentQ.correctAnswer, currentQ.points);
-
-    const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs: Math.max(0, now - startedAt), submittedAt: new Date(now).toISOString() };
-    await saveSubmission(sub);
-
-    participant.score = (participant.score || 0) + pointsAwarded;
-    participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
-    participant.attemptCount = (participant.attemptCount || 0) + 1;
-    await saveParticipant(participant);
-    await addClubScore(participant.club, pointsAwarded);
-
-    // Track fastest correct tap for question
-    if (isCorrect) {
-      const fastestKey = `fastest:${currentQ.id}`;
-      const rawCurrent = await redis.get<string>(fastestKey);
-      let currentFastest: any = null;
-      if (rawCurrent) {
-        try {
-          currentFastest = typeof rawCurrent === "string" ? JSON.parse(rawCurrent) : rawCurrent;
-        } catch (_) {}
-      }
-      if (!currentFastest || sub.responseTimeMs < currentFastest.responseTimeMs) {
-        const fastestObj = {
-          participantName: participant.name,
-          club: participant.club,
-          responseTimeMs: sub.responseTimeMs,
-          responseTimeSec: (sub.responseTimeMs / 1000).toFixed(2),
-          questionNumber: currentQ.questionNumber,
-          answer: a,
-        };
-        await redis.set(fastestKey, JSON.stringify(fastestObj), { ex: 86400 });
-        await redis.set("fastest:latest", JSON.stringify(fastestObj), { ex: 86400 });
-      }
+    const state = await getState(mode);
+    let fastestTap = null;
+    const rawFastest =
+      (await redis.get<string>(quizKeys(mode).fastest(state.currentQuestionId))) ||
+      (await redis.get<string>(quizKeys(mode).fastestLatest));
+    if (rawFastest) {
+      try {
+        fastestTap = typeof rawFastest === "string" ? JSON.parse(rawFastest) : rawFastest;
+      } catch (_) {}
     }
 
-    res.json({ ok: true, submission: sub, participantScore: participant.score });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || "Submission failed" });
-  }
-});
+    res.json({
+      clubs: [
+        { name: "STACK_PUSH", score: s },
+        { name: "IT_INNOVATORS", score: i },
+      ],
+      topStudents,
+      fastestTap,
+    });
+  });
 
-// Dual-mount
+  // ── Registration ────────────────────────────────────────────────────────────
+  router.post(`${prefix}/participants/register`, async (req, res) => {
+    try {
+      const { name, club } = req.body ?? {};
+      const n = String(name || "").trim();
+      if (!n) return res.status(400).json({ error: "Name is required" });
+      if (!isValidClub(String(club || ""))) return res.status(400).json({ error: "Valid club required" });
+
+      const nextId = await redis.incr(quizKeys(mode).nextId);
+      const id = Number(nextId) || Date.now();
+      const gen = await getSessionGen(mode);
+
+      const token = encodeToken({ id, name: n, club: String(club), gen });
+      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
+      await saveParticipant(participant, mode);
+      res.json({ ok: true, participant });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || "Registration failed" });
+    }
+  });
+
+  // ── Student Session Poll ────────────────────────────────────────────────────
+  router.get(`${prefix}/participants/session`, async (req, res) => {
+    const token = String(req.query.token ?? "");
+    if (!token) return res.status(400).json({ error: "Missing token" });
+
+    const participant = await getParticipant(token, mode);
+    if (!participant) {
+      const d = decodeToken(token);
+      const expired = d && d.gen !== (await getSessionGen(mode));
+      if (expired) return res.status(401).json({ error: "Your session was ended by the host.", code: "SESSION_EXPIRED" });
+      return res.status(404).json({ error: "Participant not found" });
+    }
+
+    const state = await getState(mode);
+    const currentQ = getQuestion(state.currentQuestionId, mode);
+    const submission = await getSubmission(participant.id, currentQ.id, mode);
+    const showQuestion = state.status === "LIVE" || state.status === "LOCKED" || state.status === "REVEALED";
+
+    res.json({
+      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, attemptCount: participant.attemptCount, sessionToken: participant.sessionToken },
+      hasSubmitted: !!submission,
+      userSubmission: sanitizeSubmission(submission),
+      currentQuestion: showQuestion ? sanitizeQuestion(currentQ) : null,
+      sessionStatus: state.status,
+      countdownEndsAt: state.countdownEndsAt,
+      questionEndsAt: state.questionEndsAt,
+      durationSeconds: state.durationSeconds || 30,
+      correctAnswer: state.status === "REVEALED" ? state.correctAnswer : null,
+    });
+  });
+
+  // ── Answer Submission ───────────────────────────────────────────────────────
+  router.post(`${prefix}/questions/submit`, async (req, res) => {
+    try {
+      const { token, answer, questionId } = req.body ?? {};
+      const rawToken = String(token || "");
+      const participant = await getParticipant(rawToken, mode);
+      if (!participant) {
+        const d = decodeToken(rawToken);
+        const expired = d && d.gen !== (await getSessionGen(mode));
+        if (expired) return res.status(401).json({ error: "Your session was ended by the host.", code: "SESSION_EXPIRED" });
+        return res.status(404).json({ error: "Participant not found" });
+      }
+
+      const state = await getState(mode);
+      if (state.status !== "LIVE") return res.status(400).json({ error: "Question is not live" });
+
+      const currentQ = getQuestion(state.currentQuestionId, mode);
+      if (!currentQ || currentQ.id !== Number(questionId)) return res.status(400).json({ error: "Wrong question" });
+
+      const a = String(answer || "").trim().toUpperCase();
+      if (!["A", "B", "C", "D"].includes(a)) return res.status(400).json({ error: "Answer must be A/B/C/D" });
+
+      const existing = await getSubmission(participant.id, currentQ.id, mode);
+      if (existing) return res.status(400).json({ error: "Already submitted" });
+
+      const now = Date.now();
+      const startedAt = state.questionStartedAt ? new Date(state.questionStartedAt).getTime() : now;
+      const { isCorrect, pointsAwarded } = evaluateSubmission(a, currentQ.correctAnswer, currentQ.points);
+
+      const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs: Math.max(0, now - startedAt), submittedAt: new Date(now).toISOString() };
+      await saveSubmission(sub, mode);
+
+      participant.score = (participant.score || 0) + pointsAwarded;
+      participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
+      participant.attemptCount = (participant.attemptCount || 0) + 1;
+      await saveParticipant(participant, mode);
+      await addClubScore(participant.club, pointsAwarded, mode);
+
+      // Track fastest correct tap for question
+      if (isCorrect) {
+        const keys = quizKeys(mode);
+        const fastestKey = keys.fastest(currentQ.id);
+        const rawCurrent = await redis.get<string>(fastestKey);
+        let currentFastest: any = null;
+        if (rawCurrent) {
+          try {
+            currentFastest = typeof rawCurrent === "string" ? JSON.parse(rawCurrent) : rawCurrent;
+          } catch (_) {}
+        }
+        if (!currentFastest || sub.responseTimeMs < currentFastest.responseTimeMs) {
+          const fastestObj = {
+            participantName: participant.name,
+            club: participant.club,
+            responseTimeMs: sub.responseTimeMs,
+            responseTimeSec: (sub.responseTimeMs / 1000).toFixed(2),
+            questionNumber: currentQ.questionNumber,
+            answer: a,
+          };
+          await redis.set(fastestKey, JSON.stringify(fastestObj), { ex: 86400 });
+          await redis.set(keys.fastestLatest, JSON.stringify(fastestObj), { ex: 86400 });
+        }
+      }
+
+      res.json({ ok: true, submission: sanitizeSubmission(sub), participantScore: participant.score });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || "Submission failed" });
+    }
+  });
+}
+
+// Dual-mount — register the live quiz (no prefix) and the test quiz (/test)
+registerModeRoutes(r, "", "live");
+registerModeRoutes(r, "/test", "test");
+
 app.use("/api", r);
 app.use("/", r);
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
