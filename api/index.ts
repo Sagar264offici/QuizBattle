@@ -1382,6 +1382,13 @@ const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcD
   .replace(/^["']|["']$/g, "")
   .trim();
 
+// Sentinel returned by redisCommand when the Redis store is unreachable.
+// It is deliberately distinct from `null` (which Redis itself returns for a
+// missing key), so callers can fail closed instead of mistaking an outage
+// for an empty store. `undefined` can never be a real Redis result (JSON has
+// no undefined).
+const REDIS_UNAVAILABLE = undefined;
+
 async function redisCommand(cmd: (string | number)[]) {
   try {
     const res = await fetch(REDIS_URL, {
@@ -1392,11 +1399,13 @@ async function redisCommand(cmd: (string | number)[]) {
       },
       body: JSON.stringify(cmd),
     });
-    const data = (await res.json()) as { result?: any };
+    if (!res.ok) return REDIS_UNAVAILABLE;
+    const data = (await res.json()) as { result?: any; error?: string };
+    if (data && typeof data === "object" && "error" in data) return REDIS_UNAVAILABLE;
     return data.result;
   } catch (err) {
     console.error("Redis error:", err);
-    return null;
+    return REDIS_UNAVAILABLE;
   }
 }
 
@@ -1519,8 +1528,16 @@ async function bumpSessionGen(mode: QuizMode): Promise<number> {
 
 // ── State Management (Redis-backed, scoped per mode) ─────────────────────────
 
+class RedisUnavailableError extends Error {
+  constructor() {
+    super("Redis state store is unreachable");
+    this.name = "RedisUnavailableError";
+  }
+}
+
 async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
   const raw = await redis.get<string>(quizKeys(mode).state);
+  if (raw === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
   if (!raw) return { ...DEFAULT_STATE };
   let state: QuizSessionState;
   try {
@@ -1661,8 +1678,56 @@ async function getSubmission(pid: number, qid: number, mode: QuizMode = "live") 
   try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
 }
 
-async function saveSubmission(sub: any, mode: QuizMode = "live") {
-  await redis.set(quizKeys(mode).submission(sub.participantId, sub.questionId), JSON.stringify(sub), { ex: 86400 });
+// Atomically record a submission only if the participant has not already
+// submitted for this question. SET ... NX is atomic on Redis, so two (or a
+// hundred) simultaneous submissions from the same participant can never both
+// pass — exactly one wins, the rest are rejected as duplicates.
+async function saveSubmissionIfAbsent(sub: any, mode: QuizMode = "live"): Promise<boolean> {
+  const res = await redisCommand([
+    "SET",
+    quizKeys(mode).submission(sub.participantId, sub.questionId),
+    JSON.stringify(sub),
+    "EX",
+    86400,
+    "NX",
+  ]);
+  return res === "OK";
+}
+
+// Atomically record the fastest correct answer for a question. EVAL runs as a
+// single atomic unit on Redis, so near-simultaneous correct submissions can
+// never both overwrite the leaderboard — only a genuinely faster response wins.
+const FASTEST_LUA = `
+local key = KEYS[1]
+local latestKey = KEYS[2]
+local newTime = tonumber(ARGV[1])
+local json = ARGV[2]
+local cur = redis.call('GET', key)
+local curTime
+if cur then
+  local ok, obj = pcall(cjson.decode, cur)
+  if ok and obj and obj.responseTimeMs then curTime = tonumber(obj.responseTimeMs) end
+end
+if (not curTime) or newTime < curTime then
+  redis.call('SET', key, json, 'EX', 86400)
+  redis.call('SET', latestKey, json, 'EX', 86400)
+  return 1
+end
+return 0
+`;
+
+async function recordFastestIfFaster(mode: QuizMode, qid: number, fastestObj: any): Promise<boolean> {
+  const keys = quizKeys(mode);
+  const res = await redisCommand([
+    "EVAL",
+    FASTEST_LUA,
+    "2",
+    keys.fastest(qid),
+    keys.fastestLatest,
+    String(fastestObj.responseTimeMs),
+    JSON.stringify(fastestObj),
+  ]);
+  return res === 1;
 }
 
 async function getClubScore(club: string, mode: QuizMode = "live"): Promise<number> {
@@ -2167,15 +2232,13 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const a = String(answer || "").trim().toUpperCase();
       if (!["A", "B", "C", "D"].includes(a)) return res.status(400).json({ error: "Answer must be A/B/C/D" });
 
-      const existing = await getSubmission(participant.id, currentQ.id, mode);
-      if (existing) return res.status(400).json({ error: "Already submitted" });
-
       const now = Date.now();
       const startedAt = state.questionStartedAt ? new Date(state.questionStartedAt).getTime() : now;
       const { isCorrect, pointsAwarded } = evaluateSubmission(a, currentQ.correctAnswer, currentQ.points);
 
       const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs: Math.max(0, now - startedAt), submittedAt: new Date(now).toISOString() };
-      await saveSubmission(sub, mode);
+      const saved = await saveSubmissionIfAbsent(sub, mode);
+      if (!saved) return res.status(400).json({ error: "Already submitted" });
 
       participant.score = (participant.score || 0) + pointsAwarded;
       participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
@@ -2183,29 +2246,17 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       await saveParticipant(participant, mode);
       await addClubScore(participant.club, pointsAwarded, mode);
 
-      // Track fastest correct tap for question
+      // Track fastest correct tap for question (atomic — race-free)
       if (isCorrect) {
-        const keys = quizKeys(mode);
-        const fastestKey = keys.fastest(currentQ.id);
-        const rawCurrent = await redis.get<string>(fastestKey);
-        let currentFastest: any = null;
-        if (rawCurrent) {
-          try {
-            currentFastest = typeof rawCurrent === "string" ? JSON.parse(rawCurrent) : rawCurrent;
-          } catch (_) {}
-        }
-        if (!currentFastest || sub.responseTimeMs < currentFastest.responseTimeMs) {
-          const fastestObj = {
-            participantName: participant.name,
-            club: participant.club,
-            responseTimeMs: sub.responseTimeMs,
-            responseTimeSec: (sub.responseTimeMs / 1000).toFixed(2),
-            questionNumber: currentQ.questionNumber,
-            answer: a,
-          };
-          await redis.set(fastestKey, JSON.stringify(fastestObj), { ex: 86400 });
-          await redis.set(keys.fastestLatest, JSON.stringify(fastestObj), { ex: 86400 });
-        }
+        const fastestObj = {
+          participantName: participant.name,
+          club: participant.club,
+          responseTimeMs: sub.responseTimeMs,
+          responseTimeSec: (sub.responseTimeMs / 1000).toFixed(2),
+          questionNumber: currentQ.questionNumber,
+          answer: a,
+        };
+        await recordFastestIfFaster(mode, currentQ.id, fastestObj);
       }
 
       res.json({ ok: true, submission: sanitizeSubmission(sub), participantScore: participant.score });
@@ -2224,6 +2275,14 @@ app.use("/", r);
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("API Error:", err);
+  // Fail closed when the authoritative state store is unreachable: never
+  // fabricate a WAITING (or any other) quiz state from a Redis outage.
+  if (err?.name === "RedisUnavailableError") {
+    return res.status(503).json({
+      error: "Quiz state temporarily unavailable — state store unreachable",
+      code: "STATE_UNAVAILABLE",
+    });
+  }
   res.status(500).json({ error: err?.message || "Internal server error" });
 });
 
