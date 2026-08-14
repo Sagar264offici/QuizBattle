@@ -1425,11 +1425,37 @@ const redis = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-type QuizStatus = "WAITING" | "COUNTDOWN" | "LIVE" | "LOCKED" | "REVEALED" | "FINISHED";
+/**
+ * Quiz lifecycle state machine (server-authoritative):
+ *
+ *   PREPARING            — host preparation. No question is exposed to
+ *                          students. Only the host's START action can leave it.
+ *        ↓  (host START QUIZ → start-countdown)
+ *   COUNTDOWN (5s)       — question hidden from students; projector overlay
+ *        ↓  (server auto-transitions on the authoritative countdownEndsAt)
+ *   LIVE (30s)           — question visible, submissions accepted
+ *        ↓  (server auto-transitions on questionEndsAt, or host LOCK)
+ *   LOCKED               — answers locked, no more submissions
+ *        ↓  (host REVEAL)
+ *   REVEALED             — correct answer shown
+ *        ↓  (host NEXT / PREV / SELECT → back to WAITING for the next question)
+ *   WAITING              — between-questions state (question still hidden)
+ *        ↓  (host START QUESTION → COUNTDOWN)
+ *   COUNTDOWN → LIVE → …
+ *
+ * FINISHED (= COMPLETED) is the terminal state reached via host END QUIZ.
+ *
+ * Every transition is validated server-side; invalid transitions are rejected
+ * with 400 so students/clients can never drive the quiz out of order.
+ */
+type QuizStatus = "PREPARING" | "WAITING" | "COUNTDOWN" | "LIVE" | "LOCKED" | "REVEALED" | "FINISHED";
+
+const COUNTDOWN_SECONDS = 5;
+const QUESTION_SECONDS = 30;
 
 interface QuizSessionState {
   status: QuizStatus;
-  currentQuestionId: number;
+  currentQuestionId: number | null;
   questionStartedAt: string | null;
   countdownEndsAt: string | null;
   questionEndsAt: string | null;
@@ -1439,15 +1465,44 @@ interface QuizSessionState {
 }
 
 const DEFAULT_STATE: QuizSessionState = {
-  status: "WAITING",
-  currentQuestionId: 1,
+  status: "PREPARING",
+  currentQuestionId: null,
   questionStartedAt: null,
   countdownEndsAt: null,
   questionEndsAt: null,
-  durationSeconds: 30,
+  durationSeconds: QUESTION_SECONDS,
   correctAnswer: null,
   updatedAt: new Date().toISOString(),
 };
+
+/**
+ * Allowed admin-driven transitions. AUTO transitions (COUNTDOWN→LIVE→LOCKED)
+ * are handled separately in getState() using server timestamps.
+ */
+function canTransition(from: QuizStatus, to: QuizStatus): boolean {
+  switch (to) {
+    case "COUNTDOWN":
+      // Host may start a countdown from preparation, between-questions, or
+      // after reveal/restart — but never while a question is running.
+      return from === "PREPARING" || from === "WAITING" || from === "REVEALED" || from === "FINISHED";
+    case "LIVE":
+      // Direct start-question (skips countdown) used by host quick-start.
+      return from === "PREPARING" || from === "WAITING" || from === "REVEALED";
+    case "LOCKED":
+      return from === "LIVE";
+    case "REVEALED":
+      return from === "LOCKED" || from === "LIVE";
+    case "WAITING":
+      // Navigating between questions is always allowed.
+      return true;
+    case "FINISHED":
+    case "PREPARING":
+      // Terminal/reset states are reachable from anywhere via explicit host actions.
+      return true;
+    default:
+      return false;
+  }
+}
 
 // ── Quiz Modes ────────────────────────────────────────────────────────────────
 
@@ -1461,6 +1516,7 @@ function quizKeys(mode: QuizMode) {
     participantTokens: isTest ? "quiz:test:participantTokens" : "quiz:participantTokens",
     nextId: isTest ? "quiz:test:nextParticipantId" : "quiz:nextParticipantId",
     sessionGen: isTest ? "quiz:test:sessionGen" : "quiz:sessionGen",
+    kickedTokens: isTest ? "quiz:test:kickedTokens" : "quiz:kickedTokens",
     participantKey: (token: string) => (isTest ? `pt:${token}` : `p:${token}`),
     submission: (pid: number, qid: number) => (isTest ? `sub:test:${pid}:${qid}` : `sub:${pid}:${qid}`),
     clubScore: (club: string) => (isTest ? `score:test:${club}` : `score:${club}`),
@@ -1481,9 +1537,11 @@ function getQuestionIds(mode: QuizMode): number[] {
   return getQuestionSet(mode).map((q) => q.id);
 }
 
-function getQuestion(qNum: number, mode: QuizMode = "live") {
+function getQuestion(qNum: number | null | undefined, mode: QuizMode = "live"): QuestionItem | null {
   const set = getQuestionSet(mode);
-  return set.find((q) => q.questionNumber === qNum) ?? set[0];
+  const n = Number(qNum);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return set.find((q) => q.questionNumber === n) ?? set[0] ?? null;
 }
 
 // ── Session Tokens (carry the per-mode session generation) ───────────────────
@@ -1546,14 +1604,16 @@ async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
     return { ...DEFAULT_STATE };
   }
 
-  // 1. Auto-transition COUNTDOWN (3s) -> LIVE (30s)
+  // 1. Auto-transition COUNTDOWN (5s) -> LIVE (30s). The server is the sole
+  // authority on when the question actually starts — the student's device
+  // clock is never used to gate submissions.
   if (state.status === "COUNTDOWN" && state.countdownEndsAt) {
     if (new Date(state.countdownEndsAt).getTime() <= Date.now()) {
       state.status = "LIVE";
       state.questionStartedAt = new Date().toISOString();
       state.countdownEndsAt = null;
-      state.questionEndsAt = new Date(Date.now() + 30 * 1000).toISOString();
-      state.durationSeconds = 30;
+      state.questionEndsAt = new Date(Date.now() + QUESTION_SECONDS * 1000).toISOString();
+      state.durationSeconds = QUESTION_SECONDS;
       state.updatedAt = new Date().toISOString();
       await redis.set(quizKeys(mode).state, JSON.stringify(state));
     }
@@ -1617,9 +1677,19 @@ function parseHGetAll(res: any): any[] {
   return [];
 }
 
+async function isTokenKicked(token: string, mode: QuizMode = "live"): Promise<boolean> {
+  const res = await redisCommand(["SISMEMBER", quizKeys(mode).kickedTokens, token]);
+  return res === 1;
+}
+
 async function getParticipant(token: string, mode: QuizMode = "live") {
   const currentGen = await getSessionGen(mode);
   const keys = quizKeys(mode);
+
+  // 0. Individually kicked participants are permanently removed: their token
+  // lives in the per-mode kicked set, so neither the roster, the key, nor the
+  // token-decoding fallback can ever resurrect them.
+  if (await isTokenKicked(token, mode)) return null;
 
   // 1. Check Hash
   const hashRaw = await redisCommand(["HGET", keys.participantsMap, token]);
@@ -1655,6 +1725,7 @@ async function getParticipant(token: string, mode: QuizMode = "live") {
       gen: d.gen,
       score: 0,
       correctCount: 0,
+      wrongCount: 0,
       attemptCount: 0,
       joinedAt: new Date().toISOString(),
     };
@@ -1662,6 +1733,40 @@ async function getParticipant(token: string, mode: QuizMode = "live") {
     return p;
   }
   return null;
+}
+
+/**
+ * Determine the correct rejection for a participant token that failed
+ * getParticipant(): kicked students get 401 PARTICIPANT_KICKED, students from
+ * a superseded session generation get 401 SESSION_EXPIRED, anything else 404.
+ */
+async function participantRejection(token: string, mode: QuizMode = "live") {
+  if (await isTokenKicked(token, mode)) {
+    return { status: 401 as const, code: "PARTICIPANT_KICKED" as const, error: "You were removed by the host." };
+  }
+  const d = decodeToken(token);
+  if (d && d.gen !== (await getSessionGen(mode))) {
+    return { status: 401 as const, code: "SESSION_EXPIRED" as const, error: "Your session was ended by the host." };
+  }
+  return { status: 404 as const, error: "Participant not found" };
+}
+
+/**
+ * Atomically remove a SINGLE participant. Only that participant's session and
+ * records are touched: the roster entry, their participant key, and their
+ * submissions are deleted and their token is added to the kicked set. Club
+ * totals, quiz state, the session generation, and every other student are
+ * intentionally untouched.
+ */
+async function kickParticipant(mode: QuizMode, token: string, p: any) {
+  const keys = quizKeys(mode);
+  await redisCommand(["SADD", keys.kickedTokens, token]);
+  await redisCommand(["EXPIRE", keys.kickedTokens, 86400]);
+  await redisCommand(["HDEL", keys.participantsMap, token]);
+  await redisCommand(["SREM", keys.participantTokens, token]);
+  await redisCommand(["DEL", keys.participantKey(token)]);
+  const toDelete = getQuestionIds(mode).map((qid) => keys.submission(p.id, qid));
+  await delKeys(toDelete);
 }
 
 async function saveParticipant(p: any, mode: QuizMode = "live") {
@@ -1779,7 +1884,7 @@ async function clearModeData(mode: QuizMode) {
   await redisCommand(["DEL", keys.participantsMap, keys.participantTokens]);
   await redis.set(keys.clubScore("STACK_PUSH"), "0");
   await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
-  await redisCommand(["DEL", keys.state, keys.nextId, keys.sessionGen]);
+  await redisCommand(["DEL", keys.state, keys.nextId, keys.sessionGen, keys.kickedTokens]);
   await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
   await redisCommand(["DEL", keys.fastestLatest]);
 }
@@ -1813,7 +1918,7 @@ async function logoutAllStudents(mode: QuizMode) {
   for (const tok of allTokens) toDelete.push(keys.participantKey(tok));
   await delKeys(toDelete);
 
-  await redisCommand(["DEL", keys.participantsMap, keys.participantTokens]);
+  await redisCommand(["DEL", keys.participantsMap, keys.participantTokens, keys.kickedTokens]);
   await redis.set(keys.clubScore("STACK_PUSH"), "0");
   await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
   await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
@@ -1894,17 +1999,22 @@ r.post("/admin/login", (req, res) => {
 function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMode) {
   // ── Admin Actions ───────────────────────────────────────────────────────────
   router.post(`${prefix}/admin/start-countdown`, requireAdmin, async (req, res) => {
+    const cur = await getState(mode);
+    if (!canTransition(cur.status, "COUNTDOWN")) {
+      return res.status(400).json({ error: `Invalid transition: ${cur.status} -> COUNTDOWN` });
+    }
     const { questionNumber } = req.body ?? {};
-    const q = getQuestion(Number(questionNumber) || (await getState(mode)).currentQuestionId || 1, mode);
+    const q = getQuestion(Number(questionNumber) || cur.currentQuestionId || 1, mode);
+    if (!q) return res.status(400).json({ error: "Question not found" });
     const now = Date.now();
-    const endsAt = new Date(now + 3000).toISOString();
-    const qEndsAt = new Date(now + 33000).toISOString();
+    const endsAt = new Date(now + COUNTDOWN_SECONDS * 1000).toISOString();
+    const qEndsAt = new Date(now + (COUNTDOWN_SECONDS + QUESTION_SECONDS) * 1000).toISOString();
     const state = await setState(mode, {
       status: "COUNTDOWN",
       currentQuestionId: q.questionNumber,
       countdownEndsAt: endsAt,
       questionEndsAt: qEndsAt,
-      durationSeconds: 30,
+      durationSeconds: QUESTION_SECONDS,
       questionStartedAt: null,
       correctAnswer: null,
     });
@@ -1912,28 +2022,40 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   });
 
   router.post(`${prefix}/admin/start-question`, requireAdmin, async (req, res) => {
+    const cur = await getState(mode);
+    if (!canTransition(cur.status, "LIVE")) {
+      return res.status(400).json({ error: `Invalid transition: ${cur.status} -> LIVE` });
+    }
     const { questionNumber } = req.body ?? {};
-    const q = getQuestion(Number(questionNumber) || (await getState(mode)).currentQuestionId || 1, mode);
+    const q = getQuestion(Number(questionNumber) || cur.currentQuestionId || 1, mode);
+    if (!q) return res.status(400).json({ error: "Question not found" });
     const now = Date.now();
     const state = await setState(mode, {
       status: "LIVE",
       currentQuestionId: q.questionNumber,
       questionStartedAt: new Date(now).toISOString(),
       countdownEndsAt: null,
-      questionEndsAt: new Date(now + 30000).toISOString(),
-      durationSeconds: 30,
+      questionEndsAt: new Date(now + QUESTION_SECONDS * 1000).toISOString(),
+      durationSeconds: QUESTION_SECONDS,
       correctAnswer: null,
     });
     res.json({ ok: true, state });
   });
 
   router.post(`${prefix}/admin/lock-answers`, requireAdmin, async (_req, res) => {
+    const cur = await getState(mode);
+    if (!canTransition(cur.status, "LOCKED")) {
+      return res.status(400).json({ error: `Invalid transition: ${cur.status} -> LOCKED` });
+    }
     const state = await setState(mode, { status: "LOCKED" });
     res.json({ ok: true, state });
   });
 
   router.post(`${prefix}/admin/reveal-answer`, requireAdmin, async (_req, res) => {
     const cur = await getState(mode);
+    if (!canTransition(cur.status, "REVEALED")) {
+      return res.status(400).json({ error: `Invalid transition: ${cur.status} -> REVEALED` });
+    }
     const q = getQuestion(cur.currentQuestionId, mode);
     const state = await setState(mode, { status: "REVEALED", correctAnswer: q?.correctAnswer ?? null });
     res.json({ ok: true, state, correctAnswer: state.correctAnswer });
@@ -1952,6 +2074,25 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       correctAnswer: null,
     });
     res.json({ ok: true, state });
+  });
+
+  /**
+   * Individual student kick (atomic, server-side). Only the targeted
+   * participant's session is invalidated — nobody else, not even their club
+   * totals, the quiz state, or the admin session are affected. The kicked
+   * student's next request receives 401 PARTICIPANT_KICKED and can never
+   * re-enter with the old token; they must register again.
+   */
+  router.post(`${prefix}/admin/kick-participant`, requireAdmin, async (req, res) => {
+    const { token } = req.body ?? {};
+    if (!token) return res.status(400).json({ error: "token required" });
+    const p = await getParticipant(String(token), mode);
+    if (!p) {
+      const rejection = await participantRejection(String(token), mode);
+      return res.status(rejection.status).json({ error: rejection.error, code: rejection.code });
+    }
+    await kickParticipant(mode, String(token), p);
+    res.json({ ok: true, message: `${p.name} was removed from the quiz.`, participantId: p.id });
   });
 
   router.post(`${prefix}/admin/prev-question`, requireAdmin, async (_req, res) => {
@@ -1994,6 +2135,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       if (p) {
         p.score = 0;
         p.correctCount = 0;
+        p.wrongCount = 0;
         p.attemptCount = 0;
         await redis.set(keys.participantKey(p.sessionToken), JSON.stringify(p), { ex: 86400 });
         for (const qid of getQuestionIds(mode)) {
@@ -2003,8 +2145,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     }
 
     const state = await setState(mode, {
-      status: "WAITING",
-      currentQuestionId: 1,
+      status: "PREPARING",
+      currentQuestionId: null,
       questionStartedAt: null,
       countdownEndsAt: null,
       questionEndsAt: null,
@@ -2013,19 +2155,26 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     res.json({ ok: true, message: "Scores and responses reset successfully. Participants retained.", state });
   });
 
+  /**
+   * Deliberate FRESH EVENT reset — the only action that wipes the roster,
+   * submissions, scores, fastest-answer data, and invalidates every existing
+   * student session (new session generation). The quiz returns to the clean
+   * PREPARING state with NO question selected. A mere admin refresh, page
+   * reconnection, or server restart never triggers this.
+   */
   router.post(`${prefix}/admin/reset-all-fresh`, requireAdmin, async (_req, res) => {
     await clearModeData(mode);
     await redis.set(quizKeys(mode).nextId, "1");
     await bumpSessionGen(mode);
     const state = await setState(mode, {
-      status: "WAITING",
-      currentQuestionId: 1,
+      status: "PREPARING",
+      currentQuestionId: null,
       questionStartedAt: null,
       countdownEndsAt: null,
       questionEndsAt: null,
       correctAnswer: null,
     });
-    res.json({ ok: true, message: "All data cleared", state });
+    res.json({ ok: true, message: "All data cleared — fresh event is in PREPARING state", state });
   });
 
   router.post(`${prefix}/admin/end-quiz`, requireAdmin, async (_req, res) => {
@@ -2073,24 +2222,26 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       return true;
     });
 
-    const currentSubmissions: any[] = (
-      await Promise.all(
-        participants.map(async (p) => {
-          try {
-            return await getSubmission(p.id, currentQ.id, mode);
-          } catch (_) {
-            return null;
-          }
-        })
-      )
-    ).filter(Boolean);
+    const currentSubmissions: any[] = currentQ
+      ? (
+          await Promise.all(
+            participants.map(async (p) => {
+              try {
+                return await getSubmission(p.id, currentQ.id, mode);
+              } catch (_) {
+                return null;
+              }
+            })
+          )
+        ).filter(Boolean)
+      : [];
 
     const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
     const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
 
     res.json({
       session: { ...state, currentQuestion: currentQ },
-      currentQuestionId: state.currentQuestionId,
+      currentQuestionId: state.currentQuestionId ?? null,
       clubs: [
         { name: "STACK_PUSH", score: stackScore },
         { name: "IT_INNOVATORS", score: innovScore },
@@ -2107,6 +2258,67 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     });
   });
 
+  // Deterministic participant ordering shared by every leaderboard: score DESC,
+  // correct answers DESC, registration time ASC, participant id ASC. Stable
+  // tie-breakers mean equal-score students never shuffle between polls.
+  function compareParticipants(a: any, b: any): number {
+    return (
+      (b.score || 0) - (a.score || 0) ||
+      (b.correctCount || 0) - (a.correctCount || 0) ||
+      String(a.joinedAt || "").localeCompare(String(b.joinedAt || "")) ||
+      (Number(a.id) || 0) - (Number(b.id) || 0)
+    );
+  }
+
+  /**
+   * Participant/member details page data. Exposes exactly what a host needs
+   * during the event: identity, club, registration time, per-participant score
+   * breakdown, submission count, whether they answered the current question,
+   * and a kick action. Sorted deterministically (score DESC, correct DESC,
+   * joinedAt ASC, id ASC). No correct answers or scoring internals leak here.
+   */
+  router.get(`${prefix}/admin/members`, requireAdmin, async (_req, res) => {
+    const state = await getState(mode);
+    const currentQ = getQuestion(state.currentQuestionId, mode);
+    const rawMap = await redisCommand(["HGETALL", quizKeys(mode).participantsMap]);
+    const participants = parseHGetAll(rawMap);
+
+    const seen = new Set<string | number>();
+    const unique = participants.filter((p) => {
+      const key = p.sessionToken || p.id || p.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const members = await Promise.all(
+      unique.map(async (p) => {
+        const submitted = currentQ ? !!(await getSubmission(p.id, currentQ.id, mode)) : false;
+        return {
+          id: Number(p.id) || 0,
+          name: String(p.name || ""),
+          club: String(p.club || ""),
+          joinedAt: p.joinedAt ?? null,
+          score: p.score || 0,
+          correctCount: p.correctCount || 0,
+          wrongCount: p.wrongCount || 0,
+          attemptCount: p.attemptCount || 0,
+          submitted,
+          // Admin-only endpoint — token needed for the individual kick action.
+          sessionToken: String(p.sessionToken || ""),
+        };
+      })
+    );
+
+    members.sort(compareParticipants);
+    res.json({
+      participants: members,
+      count: members.length,
+      status: state.status,
+      currentQuestionId: currentQ?.id ?? null,
+    });
+  });
+
   router.get(`${prefix}/admin/questions`, requireAdmin, (_req, res) => {
     res.json(getQuestionSet(mode));
   });
@@ -2115,33 +2327,36 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   router.get(`${prefix}/quiz-state`, async (_req, res) => {
     const state = await getState(mode);
     const currentQ = getQuestion(state.currentQuestionId, mode);
-    res.json({ session: { ...state, currentQuestion: sanitizeQuestion(currentQ) }, currentQuestion: sanitizeQuestion(currentQ) });
+    // During PREPARING (and between questions) no question may leak — a
+    // student or projector can never see Q1 before the host starts the quiz.
+    const safeQ = state.status === "PREPARING" ? null : sanitizeQuestion(currentQ);
+    res.json({ session: { ...state, currentQuestion: safeQ }, currentQuestion: safeQ });
   });
 
   router.get(`${prefix}/leaderboard`, async (_req, res) => {
     const s = await getClubScore("STACK_PUSH", mode);
     const i = await getClubScore("IT_INNOVATORS", mode);
 
-    // Top 3 Students of All Time
+    // Deterministic student leaderboard: score DESC, correctCount DESC,
+    // joinedAt ASC, id ASC. Stable tie-breakers guarantee equal-score students
+    // never randomly reorder between polls.
     const rawMap = await redisCommand(["HGETALL", quizKeys(mode).participantsMap]);
     const participants = parseHGetAll(rawMap);
-    const topStudents = [...participants]
-      .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.correctCount || 0) - (a.correctCount || 0))
-      .slice(0, 3)
-      .map((p, idx) => ({
-        rank: idx + 1,
-        id: p.id,
-        name: p.name,
-        club: p.club,
-        score: p.score || 0,
-        correctCount: p.correctCount || 0,
-      }));
+    const sorted = [...participants].sort(compareParticipants);
+    const students = sorted.map((p) => ({
+      id: Number(p.id) || 0,
+      name: String(p.name || ""),
+      club: String(p.club || ""),
+      score: p.score || 0,
+      correctCount: p.correctCount || 0,
+      joinedAt: p.joinedAt ?? null,
+    }));
+    const topStudents = students.slice(0, 3).map((p, idx) => ({ ...p, rank: idx + 1 }));
 
     const state = await getState(mode);
     let fastestTap = null;
-    const rawFastest =
-      (await redis.get<string>(quizKeys(mode).fastest(state.currentQuestionId))) ||
-      (await redis.get<string>(quizKeys(mode).fastestLatest));
+    const perQuestion = state.currentQuestionId ? await redis.get<string>(quizKeys(mode).fastest(state.currentQuestionId)) : null;
+    const rawFastest = perQuestion || (await redis.get<string>(quizKeys(mode).fastestLatest));
     if (rawFastest) {
       try {
         fastestTap = typeof rawFastest === "string" ? JSON.parse(rawFastest) : rawFastest;
@@ -2153,6 +2368,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         { name: "STACK_PUSH", score: s },
         { name: "IT_INNOVATORS", score: i },
       ],
+      students,
       topStudents,
       fastestTap,
     });
@@ -2171,7 +2387,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const gen = await getSessionGen(mode);
 
       const token = encodeToken({ id, name: n, club: String(club), gen });
-      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
+      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
       await saveParticipant(participant, mode);
       res.json({ ok: true, participant });
     } catch (err: any) {
@@ -2186,26 +2402,26 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
 
     const participant = await getParticipant(token, mode);
     if (!participant) {
-      const d = decodeToken(token);
-      const expired = d && d.gen !== (await getSessionGen(mode));
-      if (expired) return res.status(401).json({ error: "Your session was ended by the host.", code: "SESSION_EXPIRED" });
-      return res.status(404).json({ error: "Participant not found" });
+      const rejection = await participantRejection(token, mode);
+      return res.status(rejection.status).json({ error: rejection.error, code: rejection.code });
     }
 
     const state = await getState(mode);
     const currentQ = getQuestion(state.currentQuestionId, mode);
-    const submission = await getSubmission(participant.id, currentQ.id, mode);
+    const submission = currentQ ? await getSubmission(participant.id, currentQ.id, mode) : null;
+    // Students never see a question while the host is still preparing or
+    // between questions — the question only appears once it is COUNTDOWN->LIVE.
     const showQuestion = state.status === "LIVE" || state.status === "LOCKED" || state.status === "REVEALED";
 
     res.json({
-      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, attemptCount: participant.attemptCount, sessionToken: participant.sessionToken },
+      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, sessionToken: participant.sessionToken },
       hasSubmitted: !!submission,
       userSubmission: sanitizeSubmission(submission),
-      currentQuestion: showQuestion ? sanitizeQuestion(currentQ) : null,
+      currentQuestion: showQuestion && currentQ ? sanitizeQuestion(currentQ) : null,
       sessionStatus: state.status,
       countdownEndsAt: state.countdownEndsAt,
       questionEndsAt: state.questionEndsAt,
-      durationSeconds: state.durationSeconds || 30,
+      durationSeconds: state.durationSeconds || QUESTION_SECONDS,
       correctAnswer: state.status === "REVEALED" ? state.correctAnswer : null,
     });
   });
@@ -2217,10 +2433,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const rawToken = String(token || "");
       const participant = await getParticipant(rawToken, mode);
       if (!participant) {
-        const d = decodeToken(rawToken);
-        const expired = d && d.gen !== (await getSessionGen(mode));
-        if (expired) return res.status(401).json({ error: "Your session was ended by the host.", code: "SESSION_EXPIRED" });
-        return res.status(404).json({ error: "Participant not found" });
+        const rejection = await participantRejection(rawToken, mode);
+        return res.status(rejection.status).json({ error: rejection.error, code: rejection.code });
       }
 
       const state = await getState(mode);
@@ -2242,6 +2456,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
 
       participant.score = (participant.score || 0) + pointsAwarded;
       participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
+      participant.wrongCount = (participant.wrongCount || 0) + (isCorrect ? 0 : 1);
       participant.attemptCount = (participant.attemptCount || 0) + 1;
       await saveParticipant(participant, mode);
       await addClubScore(participant.club, pointsAwarded, mode);

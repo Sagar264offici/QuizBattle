@@ -39,6 +39,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [countdownEndsAt, setCountdownEndsAt] = useState<string | null>(null);
   const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
+  const [showGo, setShowGo] = useState(false);
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
 
@@ -99,13 +100,19 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
     };
   }, []);
 
-  // 3s Appearing Countdown tick
+  // 5s Appearing Countdown tick (5 → 4 → 3 → 2 → 1 → GO!)
   useEffect(() => {
     if (!countdownEndsAt || status !== "COUNTDOWN") { setCountdownRemaining(null); return; }
     const tick = () => {
       const sec = Math.ceil((new Date(countdownEndsAt).getTime() - Date.now()) / 1000);
       if (sec > 0) setCountdownRemaining(sec);
-      else { setCountdownRemaining(null); setCountdownEndsAt(null); setStatus("LIVE"); }
+      else {
+        setCountdownRemaining(null);
+        setCountdownEndsAt(null);
+        setShowGo(true);
+        setStatus("LIVE");
+        setTimeout(() => setShowGo(false), 900);
+      }
     };
     tick();
     const timer = setInterval(tick, 100);
@@ -134,15 +141,19 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   return (
     <div className="projector-shell">
-      {/* 3-Second Fullscreen Projector Countdown */}
-      {countdownRemaining !== null && countdownRemaining > 0 && (
+      {/* 5-Second Fullscreen Projector Countdown */}
+      {(countdownRemaining !== null && countdownRemaining > 0) || showGo ? (
         <div className="countdown-overlay">
-          <div className="countdown-number" style={{ fontSize: "12rem" }}>{countdownRemaining}</div>
+          {showGo ? (
+            <div className="countdown-go" style={{ fontSize: "12rem" }}>GO!</div>
+          ) : (
+            <div className="countdown-number" style={{ fontSize: "12rem" }}>{countdownRemaining}</div>
+          )}
           <div className="countdown-label" style={{ fontSize: "2.5rem" }}>
             ⚡ READY FOR BATTLE — QUESTION {question?.questionNumber || 1}! ⚡
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Main Container */}
       <div className="projector-grid">
@@ -174,6 +185,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               )}
               {status === "LOCKED" && <span className="badge badge-locked" style={{ fontSize: "1rem", padding: "6px 16px" }}>LOCKED</span>}
               {status === "REVEALED" && <span className="badge badge-revealed" style={{ fontSize: "1rem", padding: "6px 16px" }}>ANSWER REVEALED</span>}
+              {status === "PREPARING" && <span className="badge badge-preparing" style={{ fontSize: "1rem", padding: "6px 16px" }}>HOST IS PREPARING</span>}
               {status === "WAITING" && <span className="badge badge-waiting" style={{ fontSize: "1rem", padding: "6px 16px" }}>WAITING FOR HOST</span>}
               {question && <span className="question-points-pill" style={{ fontSize: "1rem", padding: "6px 14px" }}>+{question.points} {question.points === 1 ? "Pt" : "Pts"}</span>}
             </div>
@@ -235,10 +247,16 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                 }}
               />
               <h1 style={{ fontSize: "2.4rem", fontWeight: 900, letterSpacing: "-1px" }}>
-                {status === "FINISHED" ? "🏆 QUIZ BATTLE FINISHED!" : "GET READY FOR THE NEXT BATTLE QUESTION"}
+                {status === "FINISHED"
+                  ? "🏆 QUIZ BATTLE FINISHED!"
+                  : status === "PREPARING"
+                    ? "✨ BE PATIENT — HOST IS PREPARING"
+                    : "GET READY FOR THE NEXT BATTLE QUESTION"}
               </h1>
               <p style={{ fontSize: "1.2rem", color: "var(--text-muted)", marginTop: "12px" }}>
-                Host will launch the 3-second countdown shortly
+                {status === "PREPARING"
+                  ? "The quiz will begin shortly — keep your devices ready!"
+                  : "Host will launch the 5-second countdown shortly"}
               </p>
             </div>
           )}

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchJson, isSessionExpired, type QuizMode } from "../services/api";
+import { useNavigate } from "react-router-dom";
+import { fetchJson, isSessionExpired, isParticipantKicked, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
 interface Participant {
@@ -56,6 +57,7 @@ function loadCachedParticipant(): Participant | null {
 }
 
 export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {}) {
+  const navigate = useNavigate();
   const [sessionToken, setSessionToken] = useState<string>(() => {
     return localStorage.getItem("quizbattle-session") || "";
   });
@@ -105,11 +107,19 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [sessionEndedMessage, setSessionEndedMessage] = useState<string | null>(null);
 
-  // Timers: 3s Appearing Countdown & 30s Question Timer
+  // Timers: 5s Appearing Countdown & 30s Question Timer
   const [countdownEndsAt, setCountdownEndsAt] = useState<string | null>(null);
   const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
+  const [showGo, setShowGo] = useState(false);
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
+
+  // Connection health: last successful sync drives the subtle connecting banner
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [connectionStale, setConnectionStale] = useState(false);
+
+  // TEST QUIZ warning modal (bilingual, shown BEFORE entering test mode)
+  const [showTestWarning, setShowTestWarning] = useState(false);
 
   // Live Club Scores
   const [clubScores, setClubScores] = useState({
@@ -121,10 +131,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   const sessionRequestRef = useRef(0);
   const sessionRequestInFlightRef = useRef(false);
 
-  // Called when the server reports this student's session was ended by the host
-  // (401 + SESSION_EXPIRED). Clears local storage + in-memory state and returns
-  // the student to the Join screen with a clear message.
-  const handleSessionEnded = () => {
+  // Called when the server reports this student's session is no longer valid
+  // (401 + SESSION_EXPIRED / PARTICIPANT_KICKED). Clears local storage and
+  // in-memory state, stops polling, and returns the student to the Join screen
+  // with a clear, server-driven message.
+  const handleSessionEnded = (message: string) => {
     localStorage.removeItem("quizbattle-session");
     localStorage.removeItem("quizbattle-participant");
     saveCachedAnswer(null);
@@ -136,10 +147,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     setSelectedAnswer(null);
     setHasSubmitted(false);
     setCorrectAnswer(null);
+    setCountdownEndsAt(null);
+    setQuestionEndsAt(null);
     setIsSessionLoading(false);
-    setSessionEndedMessage(
-      mode === "test" ? "Your test session was ended by the host." : "Your session was ended by the host.",
-    );
+    setConnectionStale(false);
+    setSessionEndedMessage(message);
+  };
+
+  // Individual removal by the host — distinct message so the student knows they
+  // were kicked specifically (not a global logout).
+  const handleKicked = () => {
+    handleSessionEnded("You were removed by the host.");
   };
 
   // Sync session and participant data
@@ -163,6 +181,9 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       }>(`/api/participants/session?token=${encodeURIComponent(tok)}`, undefined, mode);
 
       if (requestId !== sessionRequestRef.current) return;
+
+      setLastSyncedAt(Date.now());
+      setConnectionStale(false);
 
       if (data.participant) {
         setParticipant(data.participant);
@@ -204,10 +225,21 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       }
     } catch (err) {
       if (isSessionExpired(err)) {
-        handleSessionEnded();
+        handleSessionEnded(
+          mode === "test" ? "Your test session was ended by the host." : "Your session was ended by the host.",
+        );
         return;
       }
-      if (requestId === sessionRequestRef.current) setIsSessionLoading(false);
+      if (isParticipantKicked(err)) {
+        handleKicked();
+        return;
+      }
+      if (requestId === sessionRequestRef.current) {
+        setIsSessionLoading(false);
+        // A failed poll means we simply don't know the current state — show a
+        // connection banner rather than guessing/faking quiz state.
+        setConnectionStale(true);
+      }
     } finally {
       if (requestId === sessionRequestRef.current) sessionRequestInFlightRef.current = false;
     }
@@ -246,7 +278,24 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     };
   }, [sessionToken]);
 
-  // 3-Second Question Appearing Countdown timer tick logic
+  // Connection-stale indicator: if the server hasn't confirmed state within the
+  // last few poll cycles, surface it clearly instead of showing stale quiz data.
+  useEffect(() => {
+    if (!sessionToken || !participant) {
+      setConnectionStale(false);
+      return;
+    }
+    const interval = setInterval(() => {
+      if (lastSyncedAt && Date.now() - lastSyncedAt > 6000) {
+        setConnectionStale(true);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [sessionToken, participant, lastSyncedAt]);
+
+  // 5-Second Question Appearing Countdown (5 → 4 → 3 → 2 → 1 → GO!)
+  // The server's countdownEndsAt is the single source of truth for when the
+  // question actually starts; this tick is purely cosmetic.
   useEffect(() => {
     if (!countdownEndsAt || status !== "COUNTDOWN") {
       setCountdownRemaining(null);
@@ -261,14 +310,18 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       } else {
         setCountdownRemaining(null);
         setCountdownEndsAt(null);
-        setStatus("LIVE");
+        setShowGo(true);
+        // Immediately refetch so the question appears the instant the server
+        // transitions COUNTDOWN -> LIVE, instead of waiting for the next poll.
+        if (sessionToken) void syncSession(sessionToken, true);
+        setTimeout(() => setShowGo(false), 900);
       }
     };
 
     updateCountdown();
     const timer = setInterval(updateCountdown, 100);
     return () => clearInterval(timer);
-  }, [countdownEndsAt, status]);
+  }, [countdownEndsAt, status, sessionToken]);
 
   // 30-Second Live Question Countdown timer tick logic
   useEffect(() => {
@@ -361,7 +414,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       syncSession(sessionToken, true);
     } catch (err: any) {
       if (isSessionExpired(err)) {
-        handleSessionEnded();
+        handleSessionEnded(
+          mode === "test" ? "Your test session was ended by the host." : "Your session was ended by the host.",
+        );
+      } else if (isParticipantKicked(err)) {
+        handleKicked();
       } else {
         setErrorMessage(err.message || "Failed to submit answer");
         syncSession(sessionToken, true);
@@ -541,6 +598,18 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 {regLoading ? "Entering Battle Arena..." : mode === "test" ? "ENTER TEST QUIZ →" : "ENTER LIVE QUIZ →"}
               </button>
 
+              {/* TEST QUIZ access — visible but deliberately gated behind a warning */}
+              {mode === "live" && (
+                <button
+                  type="button"
+                  className="btn btn-test-quiz btn-block"
+                  onClick={() => setShowTestWarning(true)}
+                  style={{ marginTop: "12px", padding: "12px", fontSize: "0.95rem" }}
+                >
+                  🧪 TEST QUIZ / टेस्ट क्विज़
+                </button>
+              )}
+
               <div style={{ marginTop: "20px", textAlign: "center", paddingTop: "14px", borderTop: "1px solid var(--border-subtle)" }}>
                 <a
                   href="/host"
@@ -558,6 +627,51 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 </a>
               </div>
             </form>
+
+            {/* TEST QUIZ bilingual warning — shown BEFORE any test-mode entry */}
+            {showTestWarning && (
+              <div className="modal-backdrop" onClick={() => setShowTestWarning(false)}>
+                <div
+                  className="modal-card test-warning-modal"
+                  onClick={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Test quiz warning"
+                >
+                  <div className="test-warning-title">🧪 TEST QUIZ / टेस्ट क्विज़</div>
+                  <div className="test-warning-sub">
+                    ⚠️ FOR CONNECTION CHECKING ONLY
+                    <br />
+                    ⚠️ केवल कनेक्शन जाँचने के लिए
+                  </div>
+                  <div className="test-warning-body">
+                    <p>
+                      This is ONLY for checking the connection and testing the QuizBattle system.
+                    </p>
+                    <p style={{ marginTop: "8px" }}>
+                      DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
+                    </p>
+                    <hr style={{ border: "none", borderTop: "1px solid var(--border-subtle)", margin: "14px 0" }} />
+                    <p>यह केवल कनेक्शन जाँचने और QuizBattle सिस्टम का परीक्षण करने के लिए है।</p>
+                    <p style={{ marginTop: "8px" }}>जब तक होस्ट/ऑर्गनाइज़र आपको न कहे, इसे न खोलें।</p>
+                  </div>
+                  <div className="modal-actions">
+                    <button className="btn btn-secondary" onClick={() => setShowTestWarning(false)}>
+                      वापस जाएँ · Go Back
+                    </button>
+                    <button
+                      className="btn btn-warning"
+                      onClick={() => {
+                        setShowTestWarning(false);
+                        navigate("/test");
+                      }}
+                    >
+                      टेस्ट क्विज़ में जाएँ · Enter Test Quiz
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -569,11 +683,22 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   return (
     <div className="app-shell">
-      {/* 3-Second Question Appearing Countdown Overlay */}
-      {countdownRemaining !== null && countdownRemaining > 0 && (
+      {/* 5-Second Question Appearing Countdown Overlay (5 → 4 → 3 → 2 → 1 → GO!) */}
+      {(countdownRemaining !== null && countdownRemaining > 0) || showGo ? (
         <div className="countdown-overlay">
-          <div className="countdown-number">{countdownRemaining}</div>
+          {showGo ? (
+            <div className="countdown-go">GO!</div>
+          ) : (
+            <div className="countdown-number">{countdownRemaining}</div>
+          )}
           <div className="countdown-label">⚡ GET READY FOR QUESTION {question?.questionNumber || 1}! ⚡</div>
+        </div>
+      ) : null}
+
+      {/* Connection health — never fake quiz state; show the truth instead */}
+      {connectionStale && sessionToken && (
+        <div className="connection-banner">
+          <span className="pulse-dot" /> Reconnecting… if this persists, check your internet connection.
         </div>
       )}
 
@@ -656,7 +781,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           <div className="question-header-bar">
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               {status === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE</span>}
-              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 3s TIMER</span>}
+              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 5s TIMER</span>}
+              {status === "PREPARING" && <span className="badge badge-preparing">HOST IS PREPARING</span>}
               {status === "WAITING" && <span className="badge badge-waiting">WAITING FOR HOST</span>}
               {status === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
               {status === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
@@ -828,8 +954,28 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 )}
               </div>
             </div>
+          ) : status === "PREPARING" ? (
+            /* POLISHED HOST-PREPARATION WAITING SCREEN */
+            <div className="status-state-card preparing-state">
+              <div className="preparing-animation" aria-hidden="true">
+                <span className="float-shape shape-1">✦</span>
+                <span className="float-shape shape-2">⚡</span>
+                <span className="float-shape shape-3">🚀</span>
+                <span className="float-shape shape-4">?</span>
+                <div className="pulse-ring" />
+                <div className="preparing-clock">⏳</div>
+              </div>
+              <h2 className="preparing-title">Be Patient ✨</h2>
+              <p className="preparing-sub">Host is preparing everything.</p>
+              <p className="preparing-sub2">Your quiz will begin shortly.</p>
+              <div className="animated-dots" aria-label="waiting">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
           ) : (
-            /* WAITING OR FINISHED STATE */
+            /* WAITING (between questions) OR FINISHED STATE */
             <div className="status-state-card" style={{ padding: "36px 20px" }}>
               <div className="status-icon-bubble">
                 {status === "FINISHED" ? "🏆" : "⚡"}
@@ -840,7 +986,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
               <p style={{ color: "var(--text-muted)", maxWidth: 480, margin: "8px auto 0" }}>
                 {status === "FINISHED"
                   ? "Thank you for participating! Check the big projector screen for final results."
-                  : "As soon as the host launches the question, a 3-second countdown will appear followed by a 30-second timer to answer!"}
+                  : "As soon as the host launches the question, a 5-second countdown will appear followed by a 30-second timer to answer!"}
               </p>
             </div>
           )}

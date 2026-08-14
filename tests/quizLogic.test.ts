@@ -58,6 +58,43 @@ describe("quiz logic", () => {
     expect(sortFastestCorrect(submissions)[0].participantName).toBe("Rahul");
   });
 
+  it("breaks equal response-time ties by server timestamp then participant id", () => {
+    const submissions = [
+      {
+        participantName: "Ravi",
+        club: "IT_INNOVATORS" as const,
+        questionNumber: 20,
+        responseTimeMs: 1200,
+        isCorrect: true,
+        submittedAt: "2026-01-01T10:00:02.000Z",
+        participantId: 7,
+      },
+      {
+        participantName: "Rahul",
+        club: "STACK_PUSH" as const,
+        questionNumber: 20,
+        responseTimeMs: 1200,
+        isCorrect: true,
+        submittedAt: "2026-01-01T10:00:01.000Z",
+        participantId: 3,
+      },
+      {
+        participantName: "Aman",
+        club: "IT_INNOVATORS" as const,
+        questionNumber: 20,
+        responseTimeMs: 1200,
+        isCorrect: true,
+        submittedAt: "2026-01-01T10:00:01.000Z",
+        participantId: 5,
+      },
+    ];
+
+    const sorted = sortFastestCorrect(submissions);
+    expect(sorted[0].participantName).toBe("Rahul");
+    expect(sorted[1].participantName).toBe("Aman");
+    expect(sorted[2].participantName).toBe("Ravi");
+  });
+
   it("prevents duplicate submissions for the same participant and question", () => {
     const existing = new Set(["p1:q10"]);
     expect(ensureUniqueSubmission(existing, "p1", 10)).toBe(false);

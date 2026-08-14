@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import AdminPage from "./pages/AdminPage";
 import DisplayPage from "./pages/DisplayPage";
+import MembersPage from "./pages/MembersPage";
 import StudentPage from "./pages/StudentPage";
 import "./styles.css";
 
@@ -20,6 +21,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/admin/test" element={<AdminPage mode="test" />} />
         <Route path="/host/test" element={<AdminPage mode="test" />} />
+        {/* Participant/member details pages */}
+        <Route path="/admin/members" element={<MembersPage mode="live" />} />
+        <Route path="/host/members" element={<MembersPage mode="live" />} />
+        <Route path="/admin/test/members" element={<MembersPage mode="test" />} />
+        <Route path="/host/test/members" element={<MembersPage mode="test" />} />
         <Route path="/display" element={<DisplayPage />} />
         <Route path="/test/display" element={<DisplayPage mode="test" />} />
         <Route path="*" element={<StudentPage />} />

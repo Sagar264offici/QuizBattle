@@ -6,6 +6,8 @@ export interface SubmissionRecord {
   questionNumber: number;
   responseTimeMs: number;
   isCorrect: boolean;
+  submittedAt?: string;
+  participantId?: number;
 }
 
 export function evaluateSubmission(
@@ -29,10 +31,26 @@ export function getClubScore(
     .reduce((sum, p) => sum + p.score, 0);
 }
 
+/**
+ * Deterministic fastest-correct ordering:
+ *   1. responseTimeMs ASC
+ *   2. server submission timestamp ASC (tie-break)
+ *   3. participant id ASC (final tie-break)
+ *
+ * Once a submission is recorded its position never moves unless a genuinely
+ * better (faster) result is added.
+ */
 export function sortFastestCorrect(items: SubmissionRecord[]) {
   return [...items]
     .filter((entry) => entry.isCorrect)
-    .sort((a, b) => a.responseTimeMs - b.responseTimeMs);
+    .sort((a, b) => {
+      const t = (a.responseTimeMs || 0) - (b.responseTimeMs || 0);
+      if (t !== 0) return t;
+      const ts =
+        String(a.submittedAt || "").localeCompare(String(b.submittedAt || ""));
+      if (ts !== 0) return ts;
+      return (a.participantId || 0) - (b.participantId || 0);
+    });
 }
 
 export function ensureUniqueSubmission(

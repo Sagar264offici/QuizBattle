@@ -42,21 +42,32 @@ export function isSessionExpired(err: unknown): boolean {
   return err instanceof ApiError && err.code === "SESSION_EXPIRED";
 }
 
+/** True when the server reported that this student was individually removed by the host. */
+export function isParticipantKicked(err: unknown): boolean {
+  return err instanceof ApiError && err.code === "PARTICIPANT_KICKED";
+}
+
+/** Default per-request timeout so a slow/hung server never blocks the UI forever. */
+const REQUEST_TIMEOUT_MS = 10000;
+
 export async function fetchJson<T>(
   input: string,
   init?: RequestInit,
   mode: QuizMode = "live",
 ): Promise<T> {
   const adminPw = getAdminPassword();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const res = await fetch(`${API_BASE}${apiPath(mode, input)}`, {
     ...init,
     credentials: "include",
+    signal: init?.signal ?? controller.signal,
     headers: {
       "Content-Type": "application/json",
       ...(adminPw ? { "x-admin-password": adminPw } : {}),
       ...(init?.headers ?? {}),
     },
-  });
+  }).finally(() => clearTimeout(timeout));
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

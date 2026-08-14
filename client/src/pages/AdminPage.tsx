@@ -28,6 +28,18 @@ interface Participant {
   correctCount: number;
   attemptCount: number;
   joinedAt: string;
+  sessionToken?: string;
+}
+
+// Deterministic roster order — score DESC, correct DESC, joinedAt ASC, id ASC.
+// Stable tie-breakers keep the roster from visually shuffling between polls.
+function stableParticipantCompare(a: Participant, b: Participant): number {
+  return (
+    (b.score || 0) - (a.score || 0) ||
+    (b.correctCount || 0) - (a.correctCount || 0) ||
+    String(a.joinedAt || "").localeCompare(String(b.joinedAt || "")) ||
+    (a.id || 0) - (b.id || 0)
+  );
 }
 
 interface Submission {
@@ -144,7 +156,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
       summaryRef.current = sumData;
 
       if (!prev || prev.session?.status !== sumData.session?.status) {
-        setStatus(sumData.session?.status || "WAITING");
+        setStatus(sumData.session?.status || "PREPARING");
       }
       if (!prev || prev.session?.currentQuestionId !== sumData.session?.currentQuestionId) {
         setCurrentQNum(sumData.session?.currentQuestionId || 1);
@@ -153,10 +165,17 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
         setClubs(sumData.clubs || []);
       }
       setQuestionEndsAt(sumData.session?.questionEndsAt || null);
-      setStackParticipants(sumData.stackParticipants || []);
-      setInnovatorsParticipants(sumData.innovatorsParticipants || []);
+
+      // Only replace roster arrays when the actual contents changed — this
+      // keeps the DOM stable across polls and stops the list from re-rendering
+      // (and visually jumping) when nothing relevant happened.
+      const nextStack = [...(sumData.stackParticipants || [])].sort(stableParticipantCompare);
+      const nextInnovators = [...(sumData.innovatorsParticipants || [])].sort(stableParticipantCompare);
+      const nextSubmissions = sumData.currentSubmissions || [];
+      setStackParticipants((cur) => (JSON.stringify(cur) === JSON.stringify(nextStack) ? cur : nextStack));
+      setInnovatorsParticipants((cur) => (JSON.stringify(cur) === JSON.stringify(nextInnovators) ? cur : nextInnovators));
       setParticipantsCount(sumData.participantsCount || 0);
-      setSubmissions(sumData.currentSubmissions || []);
+      setSubmissions((cur) => (JSON.stringify(cur) === JSON.stringify(nextSubmissions) ? cur : nextSubmissions));
     } catch (_) {}
   }, [isAuthenticated]);
 
@@ -351,6 +370,12 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 ↩ Back to Live Admin
               </a>
             )}
+            <a
+              href={mode === "test" ? "/admin/test/members" : "/admin/members"}
+              className="btn btn-secondary btn-sm"
+            >
+              👥 Members / Participant Details
+            </a>
             <button className="btn btn-secondary btn-sm" onClick={copyStudentLink}>
               📋 Copy Student Link
             </button>
@@ -393,7 +418,8 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Status</div>
             <div style={{ marginTop: "6px" }}>
               {status === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE {questionRemaining !== null ? `(${questionRemaining}s)` : ""}</span>}
-              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 3s TIMER</span>}
+              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 5s TIMER</span>}
+              {status === "PREPARING" && <span className="badge badge-preparing">PREPARING</span>}
               {status === "WAITING" && <span className="badge badge-waiting">WAITING</span>}
               {status === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
               {status === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
@@ -403,8 +429,8 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
 
           <div className="score-card">
             <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Active Question</div>
-            <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#f8fafc", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
-              Q{currentQNum}
+            <div style={{ fontSize: "1.8rem", fontWeight: 900, color: status === "PREPARING" ? "var(--text-dim)" : "#f8fafc", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
+              {status === "PREPARING" ? "—" : `Q${currentQNum}`}
             </div>
           </div>
 
@@ -442,11 +468,13 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="admin-actions-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
                 <div>
-                  <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#38bdf8", textTransform: "uppercase" }}>
-                    {activeQuestion?.roundName || "Round 1"}
+                  <span style={{ fontSize: "0.8rem", fontWeight: 800, color: status === "PREPARING" ? "var(--text-dim)" : "#38bdf8", textTransform: "uppercase" }}>
+                    {status === "PREPARING" ? "Preparing" : activeQuestion?.roundName || "Round 1"}
                   </span>
                   <h2 style={{ fontSize: "1.4rem", fontWeight: 800, marginTop: "2px" }}>
-                    Active Question #{currentQNum} (+{activeQuestion?.points || 1} pts)
+                    {status === "PREPARING"
+                      ? "No question is live yet — press START QUIZ when ready"
+                      : `Active Question #${currentQNum} (+${activeQuestion?.points || 1} pts)`}
                   </h2>
                 </div>
                 <div style={{ display: "flex", gap: "8px" }}>
@@ -523,10 +551,10 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 <button
                   className="btn btn-success btn-lg"
                   style={{ flex: "1 1 200px" }}
-                  onClick={() => runHostAction("/api/admin/start-countdown", { questionNumber: currentQNum }, "⏱️ 3-Second Countdown Started!")}
-                  disabled={actionLoading || status === "LIVE" || status === "COUNTDOWN"}
+                  onClick={() => runHostAction("/api/admin/start-countdown", { questionNumber: currentQNum }, "⏱️ 5-Second Countdown Started!")}
+                  disabled={actionLoading || status === "LIVE" || status === "COUNTDOWN" || status === "LOCKED"}
                 >
-                  ⏱️ START QUESTION (3s Timer)
+                  {status === "PREPARING" ? "▶ START QUIZ (5s Timer)" : "⏱️ START QUESTION (5s Timer)"}
                 </button>
 
                 <button
@@ -720,6 +748,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                       {stackParticipants.map((p) => (
                         <div
                           key={p.id}
+                          className="roster-row"
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
@@ -728,10 +757,26 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                             padding: "6px 10px",
                             borderRadius: "6px",
                             fontSize: "0.85rem",
+                            gap: "8px",
                           }}
                         >
-                          <span style={{ fontWeight: 700 }}>{p.name}</span>
+                          <span style={{ fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
                           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>{p.score} pts</span>
+                          {p.sessionToken && (
+                            <button
+                              className="kick-mini-btn"
+                              title={`Kick ${p.name}`}
+                              aria-label={`Kick ${p.name}`}
+                              onClick={() => {
+                                if (confirm(`Kick ${p.name}?\n\nAre you sure you want to remove this participant?`)) {
+                                  runHostAction("/api/admin/kick-participant", { token: p.sessionToken }, `🚪 ${p.name} removed.`);
+                                }
+                              }}
+                              disabled={actionLoading}
+                            >
+                              ✕
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -753,6 +798,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                       {innovatorsParticipants.map((p) => (
                         <div
                           key={p.id}
+                          className="roster-row"
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
@@ -761,10 +807,26 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                             padding: "6px 10px",
                             borderRadius: "6px",
                             fontSize: "0.85rem",
+                            gap: "8px",
                           }}
                         >
-                          <span style={{ fontWeight: 700 }}>{p.name}</span>
+                          <span style={{ fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
                           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>{p.score} pts</span>
+                          {p.sessionToken && (
+                            <button
+                              className="kick-mini-btn"
+                              title={`Kick ${p.name}`}
+                              aria-label={`Kick ${p.name}`}
+                              onClick={() => {
+                                if (confirm(`Kick ${p.name}?\n\nAre you sure you want to remove this participant?`)) {
+                                  runHostAction("/api/admin/kick-participant", { token: p.sessionToken }, `🚪 ${p.name} removed.`);
+                                }
+                              }}
+                              disabled={actionLoading}
+                            >
+                              ✕
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
