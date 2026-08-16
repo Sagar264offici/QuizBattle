@@ -254,8 +254,10 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
     refreshData();
     // Poll faster while a question is actually running (live/countdown) so the
     // host sees submissions and status changes with less delay; idle states
-    // can poll slower to keep Redis traffic down.
-    const pollMs = status === "LIVE" || status === "COUNTDOWN" ? 700 : 1200;
+    // can poll slower to keep Redis traffic down. Cadence kept modest so the
+    // free Redis tier can serve a full live event (the single host poll is
+    // cheap, but it still costs commands).
+    const pollMs = status === "LIVE" || status === "COUNTDOWN" ? 2000 : 3000;
     const interval = setInterval(refreshData, pollMs);
     return () => clearInterval(interval);
   }, [isAuthenticated, refreshData, status]);

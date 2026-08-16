@@ -92,7 +92,9 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   useEffect(() => {
     syncState();
-    const interval = setInterval(syncState, 1200);
+    // 2s cadence — the projector is a single client, but every poll costs
+    // Redis commands, so it stays modest to protect the free-tier quota.
+    const interval = setInterval(syncState, 2000);
     socket.on("quiz:state", syncState);
     socket.on("leaderboard:update", syncState);
     socket.on("display:reveal", (data) => {

@@ -160,12 +160,13 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   // A question is only shown after the host actually starts it. On first
   // login / reload a leftover or stale question NEVER appears — the student
   // stays on "WAITING FOR HOST TO START" until a countdown start is observed.
-  const [quizStarted, setQuizStarted] = useState(false);
-  const observedIdleRef = useRef(false);
-
+  const [quizStarted, setQuizStarted] = useState(false);  const observedIdleRef = useRef(false);
   const lastQuestionIdRef = useRef<number | null>(null);
   const sessionRequestRef = useRef(0);
   const sessionRequestInFlightRef = useRef(false);
+  // Tracks the last observed server status so the top-3 widget only refreshes
+  // when an answer is revealed (cheap: no per-submit leaderboard calls).
+  const prevStatusRef = useRef<string | null>(null);
 
   // Called when the server reports this student's session is no longer valid
   // (401 + SESSION_EXPIRED / PARTICIPANT_KICKED). Clears local storage and
@@ -228,6 +229,14 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         setIsSessionLoading(false);
       }
       if (data.sessionStatus) {
+        // Refresh the top-3 widget only when the answer is revealed — club
+        // scores already ride along on this poll (data.clubs), so per-submit
+        // leaderboard calls would be pure extra Redis cost.
+        const prevStatus = prevStatusRef.current;
+        prevStatusRef.current = data.sessionStatus;
+        if (data.sessionStatus === "REVEALED" && prevStatus !== "REVEALED") {
+          syncLeaderboard();
+        }
         setStatus(data.sessionStatus);
         // A question may only be shown after the host actually starts it.
         // First login / reload never shows a leftover question — the student
@@ -319,11 +328,24 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       syncLeaderboard();
     }
 
-    // Poll faster while a question is actually running (countdown/live) so
-    // status changes arrive sooner on mobile; idle states poll slower to keep
-    // Redis traffic low. The countdown/GO reveal itself is client-timed, so
-    // the question still appears at the exact same moment on every device.
-    const pollMs = status === "LIVE" || status === "COUNTDOWN" ? 700 : 1200;
+    // Polling cadence is tuned so the free Redis tier can serve a full live
+    // event. The countdown/GO reveal and the question timer are CLIENT-TIMED
+    // from absolute server timestamps, so slowing polls never delays the
+    // actual question — every device still sees it at the exact same moment.
+    // Fast polling is reserved for transitions only the host can trigger:
+    //   LOCKED  → poll fast (1.5s) to catch the host's REVEAL quickly
+    //   COUNTDOWN → poll briskly (3s) to preload the upcoming question
+    //   WAITING/REVEALED → moderate (5s); the host's START is announced and
+    //     even a late catch still delivers the question with correct timing
+    //   LIVE → slow safety net (10s); the timer, lock-in, and score are all
+    //     driven client-side + by the submit response
+    //   PREPARING/FINISHED → very slow (10s)
+    const pollMs =
+      status === "LOCKED" ? 1500 :
+      status === "COUNTDOWN" ? 3000 :
+      status === "LIVE" ? 10000 :
+      status === "WAITING" || status === "REVEALED" ? 5000 :
+      10000;
     const interval = setInterval(() => {
       if (sessionToken) syncSession(sessionToken);
     }, pollMs);
@@ -353,7 +375,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       } catch (_) {}
     };
     checkPortal();
-    const interval = setInterval(checkPortal, 2500);
+    const interval = setInterval(checkPortal, 5000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -362,13 +384,15 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   // Connection-stale indicator: if the server hasn't confirmed state within the
   // last few poll cycles, surface it clearly instead of showing stale quiz data.
+  // The threshold comfortably exceeds the slowest poll cadence (LIVE polls
+  // every 10s by design), so a healthy device never shows a false alarm.
   useEffect(() => {
     if (!sessionToken || !participant) {
       setConnectionStale(false);
       return;
     }
     const interval = setInterval(() => {
-      if (lastSyncedAt && Date.now() - lastSyncedAt > 6000) {
+      if (lastSyncedAt && Date.now() - lastSyncedAt > 16000) {
         setConnectionStale(true);
       }
     }, 2000);
@@ -580,7 +604,6 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         setBonusToast(res.bonusAwarded);
         window.setTimeout(() => setBonusToast(0), 4000);
       }
-      syncLeaderboard();
       syncSession(sessionToken, true);
     } catch (err: any) {
       // Revert the optimistic lock-in — the server never accepted it.

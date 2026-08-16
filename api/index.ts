@@ -3,10 +3,13 @@
  * Uses @upstash/redis SDK for shared state across all serverless lambdas.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
 import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData.js";
+import { createMemoryStore } from "./memoryStore.js";
 export interface QuestionItem {
   id: number;
   questionNumber: number;
@@ -1355,12 +1358,24 @@ function evaluateSubmission(answer: string, correctAnswer: string, points: numbe
 
 // ── Redis Native REST Client ───────────────────────────────────────────────
 
-const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || "https://casual-ray-186045.upstash.io")
+const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || "https://valued-bluebird-145233.upstash.io")
   .replace(/^["']|["']$/g, "")
   .trim();
-const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcDI3NmExNGJjOTA2YTU0MDk4YTc5OGUzMWYyMjI4N2U5Yg")
+const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAjdRAAIgcDIwYTE1NmM1Y2I2NzM0MDQ3YjFiZGQ0ZmM3NWZiMWQ0YQ")
   .replace(/^["']|["']$/g, "")
   .trim();
+
+// ── Local in-memory store (zero-cost event mode) ─────────────────────────────
+// Enabled explicitly via QUIZ_STORE=memory, or automatically when no Upstash
+// credentials are configured outside Vercel. Every Redis command then runs
+// against an in-process store: no quota, no network, no cost — the exact same
+// command semantics, just local. This powers running the whole quiz from one
+// host machine (LAN, or a free public tunnel like Cloudflare Quick Tunnel /
+// ngrok) so remote students can join without any paid database.
+const USE_MEMORY_STORE =
+  process.env.QUIZ_STORE === "memory" ||
+  (process.env.VERCEL !== "1" && !process.env.UPSTASH_REDIS_REST_URL && !process.env.UPSTASH_REDIS_REST_TOKEN);
+const memoryStore = USE_MEMORY_STORE ? createMemoryStore() : null;
 
 // Sentinel returned by redisCommand when the Redis store is unreachable.
 // It is deliberately distinct from `null` (which Redis itself returns for a
@@ -1369,7 +1384,19 @@ const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAta9AAIgcD
 // no undefined).
 const REDIS_UNAVAILABLE = undefined;
 
+/**
+ * True when an Upstash response body says the free-tier REQUEST QUOTA is
+ * exhausted ("ERR max requests limit exceeded" / "ERR max daily request
+ * limit exceeded"). That is a billing condition — the store itself is fine —
+ * so it must surface as its own error instead of being mistaken for an outage.
+ */
+function isUpstashQuotaErrorBody(text: string): boolean {
+  return /max (requests?|daily request) limit exceeded/i.test(text);
+}
+
 async function redisCommand(cmd: (string | number)[]) {
+  // In-memory mode: dispatch to the local store — never touches Upstash.
+  if (memoryStore) return memoryStore.command(cmd);
   try {
     const res = await fetch(REDIS_URL, {
       method: "POST",
@@ -1379,11 +1406,24 @@ async function redisCommand(cmd: (string | number)[]) {
       },
       body: JSON.stringify(cmd),
     });
-    if (!res.ok) return REDIS_UNAVAILABLE;
+    if (!res.ok) {
+      // Upstash answers HTTP 400 with an error body when the monthly/daily
+      // request quota is exhausted — throw so the host sees the real fix
+      // (upgrade plan / new database) instead of a generic "unreachable".
+      const text = await res.text().catch(() => "");
+      if (isUpstashQuotaErrorBody(text)) throw new RedisQuotaExceededError();
+      return REDIS_UNAVAILABLE;
+    }
     const data = (await res.json()) as { result?: any; error?: string };
-    if (data && typeof data === "object" && "error" in data) return REDIS_UNAVAILABLE;
+    if (data && typeof data === "object" && "error" in data) {
+      if (typeof data.error === "string" && isUpstashQuotaErrorBody(data.error)) {
+        throw new RedisQuotaExceededError();
+      }
+      return REDIS_UNAVAILABLE;
+    }
     return data.result;
   } catch (err) {
+    if (err instanceof RedisQuotaExceededError) throw err;
     console.error("Redis error:", err);
     return REDIS_UNAVAILABLE;
   }
@@ -1400,6 +1440,8 @@ async function redisCommand(cmd: (string | number)[]) {
  */
 async function redisPipeline(cmds: (string | number)[][]) {
   if (cmds.length === 0) return [];
+  // In-memory mode: apply the batch against the local store.
+  if (memoryStore) return memoryStore.pipeline(cmds);
   try {
     const res = await fetch(`${REDIS_URL}/pipeline`, {
       method: "POST",
@@ -1409,14 +1451,29 @@ async function redisPipeline(cmds: (string | number)[][]) {
       },
       body: JSON.stringify(cmds),
     });
-    if (!res.ok) return REDIS_UNAVAILABLE;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      if (isUpstashQuotaErrorBody(text)) throw new RedisQuotaExceededError();
+      return REDIS_UNAVAILABLE;
+    }
     const data = (await res.json()) as unknown;
     if (!Array.isArray(data)) return REDIS_UNAVAILABLE;
     return data.map((item: any) => {
       if (item && typeof item === "object" && "result" in item) return item.result;
+      // Per-command failure slot: when the quota is exhausted, EVERY command
+      // in the pipeline fails with the quota error — surface it as such.
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof item.error === "string" &&
+        isUpstashQuotaErrorBody(item.error)
+      ) {
+        throw new RedisQuotaExceededError();
+      }
       return REDIS_UNAVAILABLE;
     });
   } catch (err) {
+    if (err instanceof RedisQuotaExceededError) throw err;
     console.error("Redis pipeline error:", err);
     return REDIS_UNAVAILABLE;
   }
@@ -1661,6 +1718,20 @@ class RedisUnavailableError extends Error {
   constructor() {
     super("Redis state store is unreachable");
     this.name = "RedisUnavailableError";
+  }
+}
+
+/**
+ * The Upstash store is reachable but its free-tier REQUEST QUOTA is exhausted
+ * ("ERR max requests limit exceeded", 500k commands/month). Distinct from
+ * RedisUnavailableError so the host is told the actual remedy (add a payment
+ * method to auto-upgrade, or create a new database) rather than a generic
+ * outage message.
+ */
+class RedisQuotaExceededError extends Error {
+  constructor() {
+    super("Upstash Redis request quota exhausted (free-tier 500k/month limit reached)");
+    this.name = "RedisQuotaExceededError";
   }
 }
 
@@ -2041,7 +2112,12 @@ r.get("/health", async (_req, res) => {
     const s = await getState("live");
     res.json({ ok: true, status: s.status, redis: pong });
   } catch (e: any) {
-    res.json({ ok: false, redis: false, error: e.message });
+    res.status(e?.name === "RedisQuotaExceededError" ? 503 : 200).json({
+      ok: false,
+      redis: false,
+      error: e?.message || "Redis check failed",
+      code: e?.name === "RedisQuotaExceededError" ? "REDIS_QUOTA_EXCEEDED" : undefined,
+    });
   }
 });
 
@@ -2959,6 +3035,19 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
 registerModeRoutes(r, "", "live");
 registerModeRoutes(r, "/test", "test");
 
+// Serve the built client (client → dist/) from the same origin when present.
+// Powers the single-URL event setup (LAN or free public tunnel): one process
+// serves both the frontend and the API, and the production client already
+// calls the API relative to its own origin. Skipped on Vercel, where the
+// platform serves the static build and rewrites non-API routes to index.html.
+if (process.env.VERCEL !== "1") {
+  const DIST_DIR = path.resolve(process.cwd(), "dist");
+  if (fs.existsSync(path.join(DIST_DIR, "index.html"))) {
+    app.use(express.static(DIST_DIR));
+    app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(DIST_DIR, "index.html")));
+  }
+}
+
 app.use("/api", r);
 app.use("/", r);
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
@@ -2970,6 +3059,16 @@ app.use((err: any, _req: any, res: any, _next: any) => {
     return res.status(503).json({
       error: "Quiz state temporarily unavailable — state store unreachable",
       code: "STATE_UNAVAILABLE",
+    });
+  }
+  // Same fail-closed stance, but for the distinct billing condition where the
+  // store is reachable yet rejects every command: Upstash free-tier request
+  // quota exhausted (500k commands/month). The remedy is outside the code.
+  if (err?.name === "RedisQuotaExceededError") {
+    return res.status(503).json({
+      error:
+        "Quiz temporarily unavailable — Upstash Redis request quota exhausted (free-tier 500k/month limit reached). Add a payment method to auto-upgrade the database, or create a new database and update UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN.",
+      code: "REDIS_QUOTA_EXCEEDED",
     });
   }
   res.status(500).json({ error: err?.message || "Internal server error" });
