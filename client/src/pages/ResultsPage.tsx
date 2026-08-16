@@ -65,23 +65,25 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
   }, [mode]);
 
   const students = data?.students ?? [];
+  // The leaderboard's top 3 — clubs can be mixed (e.g. 1st IT Innovators,
+  // 2nd Stack.push, 3rd IT Innovators). Certificates follow this exact order.
   const topThree = students.slice(0, 3);
   const stackScore = data?.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0;
   const innovScore = data?.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0;
   const fastestTap = data?.fastestTap ?? null;
 
-  const toCertificate = (s: ResultStudent, idx: number): CertificateStudent => ({
+  const toCertificate = (s: ResultStudent, rank: 1 | 2 | 3): CertificateStudent => ({
     name: s.name,
     club: s.club,
     score: s.score,
     correctCount: s.correctCount,
     attemptCount: s.attemptCount,
     totalResponseMs: s.totalResponseMs,
-    rank: (idx + 1) as 1 | 2 | 3,
+    rank,
   });
 
-  const downloadOne = (s: ResultStudent, idx: number) => {
-    downloadCertificatePNG(toCertificate(s, idx), {
+  const downloadOne = async (s: ResultStudent, rank: 1 | 2 | 3) => {
+    await downloadCertificatePNG(toCertificate(s, rank), {
       mode,
       eventName:
         mode === "test"
@@ -90,11 +92,11 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
     });
   };
 
-  const downloadAll = async () => {
+  const downloadList = async (list: ResultStudent[]) => {
     setDownloading(true);
     try {
-      for (let i = 0; i < topThree.length; i++) {
-        downloadOne(topThree[i], i);
+      for (let i = 0; i < list.length; i++) {
+        await downloadOne(list[i], (i + 1) as 1 | 2 | 3);
         // Browsers block rapid-fire downloads — space them out.
         await new Promise((r) => setTimeout(r, 450));
       }
@@ -102,6 +104,8 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
       setDownloading(false);
     }
   };
+
+  const generateLeaderboardCertificates = async () => downloadList(topThree);
 
   return (
     <div className="app-shell">
@@ -210,7 +214,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                     <button
                       className="btn btn-warning btn-sm"
                       style={{ marginTop: "14px", width: "100%", fontWeight: 900 }}
-                      onClick={() => downloadOne(s, idx)}
+                      onClick={() => void downloadOne(s, (idx + 1) as 1 | 2 | 3)}
                       title={`Download ${s.name}'s PNG certificate`}
                     >
                       🖼️ Download Certificate (PNG)
@@ -223,9 +227,19 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
 
           {topThree.length > 0 && (
             <div style={{ textAlign: "center", marginTop: "18px" }}>
-              <button className="btn btn-primary btn-lg" onClick={downloadAll} disabled={downloading} style={{ fontWeight: 900 }}>
-                {downloading ? "Generating certificates..." : "⬇️ Download All Top-3 Certificates"}
+              <button
+                className="btn btn-primary btn-lg"
+                onClick={() => void generateLeaderboardCertificates()}
+                disabled={downloading}
+                style={{ fontWeight: 900, fontSize: "1.05rem", padding: "14px 26px" }}
+              >
+                {downloading
+                  ? "Generating certificates..."
+                  : "🎖️ Generate Certificates for Leaderboard (1st · 2nd · 3rd)"}
               </button>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "10px" }}>
+                Creates 3 certificates — the leaderboard's exact top 3, any mix of clubs, on the official college template.
+              </p>
             </div>
           )}
         </div>

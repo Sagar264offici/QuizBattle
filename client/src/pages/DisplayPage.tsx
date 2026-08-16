@@ -238,6 +238,100 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                 })}
               </div>
             </div>
+          ) : status === "FINISHED" ? (
+            /* 🏆 FINISHED — projector shows the winner podium */
+            <div style={{ textAlign: "center", padding: "40px 24px" }}>
+              <h1 style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-1px" }}>
+                🏆 QUIZ BATTLE FINISHED!
+              </h1>
+              <p style={{ fontSize: "1.2rem", color: "var(--text-muted)", marginTop: "10px" }}>
+                Winner declared — congratulations to all champions!
+              </p>
+
+              {/* Champion club banner */}
+              {(() => {
+                const stack = clubScores.STACK_PUSH;
+                const innov = clubScores.IT_INNOVATORS;
+                const champion = stack > innov ? "STACK_PUSH" : innov > stack ? "IT_INNOVATORS" : null;
+                const championColor = champion === "STACK_PUSH" ? "#60a5fa" : "#34d399";
+                return (
+                  <div
+                    style={{
+                      display: "inline-block",
+                      marginTop: "22px",
+                      padding: "16px 44px",
+                      borderRadius: "18px",
+                      border: `3px solid ${champion ? championColor : "#fbbf24"}`,
+                      background: champion
+                        ? `linear-gradient(135deg, ${championColor}26, rgba(255,255,255,0.03))`
+                        : "rgba(251, 191, 36, 0.12)",
+                      boxShadow: champion ? `0 0 40px ${championColor}55` : "0 0 30px rgba(251, 191, 36, 0.25)",
+                    }}
+                  >
+                    <div style={{ fontSize: "3rem", lineHeight: 1 }}>
+                      {champion === "STACK_PUSH" ? "⚡" : champion === "IT_INNOVATORS" ? "🚀" : "🤝"}
+                    </div>
+                    <div style={{ fontSize: "2rem", fontWeight: 900, color: champion ? championColor : "#fbbf24", marginTop: "4px" }}>
+                      {champion
+                        ? `${champion === "STACK_PUSH" ? "STACK.PUSH" : "IT INNOVATORS"} — CHAMPION!`
+                        : "MATCH TIED!"}
+                    </div>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "#e2e8f0", marginTop: "6px" }}>
+                      ⚡ Stack.push {stack} pts &nbsp;vs&nbsp; 🚀 IT Innovators {innov} pts
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Top 3 podium */}
+              {topStudents.length > 0 && (
+                <div style={{ display: "flex", justifyContent: "center", gap: "20px", marginTop: "30px", flexWrap: "wrap" }}>
+                  {topStudents.map((s, idx) => (
+                    <div
+                      key={s.name + s.club + s.rank}
+                      style={{
+                        width: 250,
+                        padding: "18px 14px",
+                        borderRadius: "16px",
+                        background:
+                          idx === 0
+                            ? "linear-gradient(160deg, rgba(251, 191, 36, 0.18), rgba(245, 158, 11, 0.05))"
+                            : "rgba(255,255,255,0.04)",
+                        border: idx === 0 ? "2px solid rgba(251, 191, 36, 0.5)" : "1px solid rgba(255,255,255,0.1)",
+                        boxShadow: idx === 0 ? "0 0 30px rgba(251, 191, 36, 0.2)" : "none",
+                      }}
+                    >
+                      <div style={{ fontSize: "3.2rem", lineHeight: 1 }}>{podiumEmojis[idx]}</div>
+                      <div style={{ fontSize: "1.6rem", fontWeight: 900, color: podiumColors[idx], marginTop: "6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.name}
+                      </div>
+                      <div style={{ fontSize: "1rem", fontWeight: 800, color: clubColor(s.club) }}>
+                        {clubLabel(s.club)}
+                      </div>
+                      <div style={{ fontSize: "2rem", fontWeight: 900, color: "#fbbf24", fontFamily: "var(--font-mono)", marginTop: "6px" }}>
+                        {s.score} pts
+                      </div>
+                      <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>✓ {s.correctCount} correct</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <a
+                href={mode === "test" ? "/test/results" : "/results"}
+                className="btn btn-warning btn-lg"
+                style={{
+                  marginTop: "26px",
+                  fontSize: "1.3rem",
+                  fontWeight: 900,
+                  padding: "16px 34px",
+                  display: "inline-block",
+                  boxShadow: "0 0 30px rgba(245, 158, 11, 0.35)",
+                }}
+              >
+                🏆 VIEW FINAL RESULTS — TOP 3 + CERTIFICATES
+              </a>
+            </div>
           ) : (
             <div style={{ textAlign: "center", padding: "60px 20px" }}>
               <img
@@ -256,33 +350,15 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                 }}
               />
               <h1 style={{ fontSize: "2.4rem", fontWeight: 900, letterSpacing: "-1px" }}>
-                {status === "FINISHED"
-                  ? "🏆 QUIZ BATTLE FINISHED!"
-                  : status === "PREPARING"
-                    ? "✨ BE PATIENT — HOST IS PREPARING"
-                    : "GET READY FOR THE NEXT BATTLE QUESTION"}
+                {status === "PREPARING"
+                  ? "✨ BE PATIENT — HOST IS PREPARING"
+                  : "GET READY FOR THE NEXT BATTLE QUESTION"}
               </h1>
               <p style={{ fontSize: "1.2rem", color: "var(--text-muted)", marginTop: "12px" }}>
                 {status === "PREPARING"
                   ? "The quiz will begin shortly — keep your devices ready!"
                   : "Host will launch the 5-second countdown shortly"}
               </p>
-              {status === "FINISHED" && (
-                <a
-                  href={mode === "test" ? "/test/results" : "/results"}
-                  className="btn btn-warning btn-lg"
-                  style={{
-                    marginTop: "18px",
-                    fontSize: "1.3rem",
-                    fontWeight: 900,
-                    padding: "16px 34px",
-                    display: "inline-block",
-                    boxShadow: "0 0 30px rgba(245, 158, 11, 0.35)",
-                  }}
-                >
-                  🏆 VIEW FINAL RESULTS — TOP 3 + CERTIFICATES
-                </a>
-              )}
             </div>
           )}
         </div>

@@ -6,3 +6,4 @@ dist
 coverage
 *.db
 *.db-journal
+.freebuff

@@ -1,7 +1,9 @@
 /**
- * Certificate rendering — draws a beautiful, print-ready PNG certificate on a
- * <canvas> entirely in the browser (no server round-trip, no extra deps) for
- * the TOP 3 students of a finished quiz. Exports via toDataURL("image/png").
+ * Certificate rendering — stamps a student's name, position (1st / 2nd / 3rd)
+ * and the date onto the official college certificate template
+ * (CertificateFirst.png → /certificates/certificate-template.png) entirely in
+ * the browser on a <canvas> (no server round-trip, no extra deps).
+ * Exports via toDataURL("image/png").
  */
 
 export interface CertificateStudent {
@@ -16,24 +18,56 @@ export interface CertificateStudent {
 
 export interface CertificateOptions {
   mode?: "live" | "test";
-  /** Shown on the certificate as the event name (defaults to the quiz title). */
+  /** Accepted for API compatibility; the official template has no event-name field. */
   eventName?: string;
   date?: Date;
 }
 
-const W = 1600;
-const H = 1131;
+// Official template is 1448 × 1086 (CertificateFirst.png).
+const W = 1448;
+const H = 1086;
+const TEMPLATE_URL = "/certificates/certificate-template.png";
 
-const GOLD = "#f5c542";
-const GOLD_LIGHT = "#ffe9a3";
-const GOLD_DIM = "#b98a2e";
-const INK = "#eaf0fb";
-const MUTED = "#9fb0cc";
+// Ink colors sampled from the template.
+const BG = "#faf6f1"; // parchment background (250, 246, 241)
+const NAVY = "#2a304b"; // dark navy name/body ink (42, 48, 75)
+const GOLD = "#b67f24"; // gold/bronze of "FIRST POSITION" (≈182, 127, 36)
 
 const SERIF = '"Georgia", "Times New Roman", serif';
-const SANS = '"Arial", "Helvetica Neue", sans-serif';
 
-/** Format a millisecond duration for the certificate (e.g. "12.4s", "1m 24s"). */
+const RANK_WORDS = ["", "FIRST POSITION", "SECOND POSITION", "THIRD POSITION"];
+const RANK_SHORT = ["", "1st", "2nd", "3rd"];
+
+// ── Template text regions (pixels on the 1448×1086 image) ────────────────
+// Name blank line: y 660–661, x 351–1121 → name centered at x 736.
+const NAME_CENTER_X = 736;
+const NAME_BASELINE_Y = 652;
+
+// "has secured FIRST POSITION" line: y ≈688–709, gold text x 620–931,
+// "has secured" navy x 528–612. The whole line is centered at x ≈736.
+const POSITION_LINE_CENTER_X = 736;
+const POSITION_LINE_BASELINE_Y = 708;
+
+// Date field: "DATE:" label then a blank line at y ≈1020–1024, x ≈560–890.
+const DATE_CENTER_X = 725;
+const DATE_BASELINE_Y = 1016;
+
+let templatePromise: Promise<HTMLImageElement> | null = null;
+
+/** Load (and cache) the official certificate template image. */
+export function loadTemplate(): Promise<HTMLImageElement> {
+  if (!templatePromise) {
+    templatePromise = new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Failed to load the certificate template"));
+      img.src = TEMPLATE_URL;
+    });
+  }
+  return templatePromise;
+}
+
+/** Format a millisecond duration (e.g. "12.4s", "1m 24s"). */
 export function formatDuration(ms: number): string {
   const totalSec = Math.max(0, ms) / 1000;
   if (totalSec < 60) return `${totalSec.toFixed(1)}s`;
@@ -42,253 +76,113 @@ export function formatDuration(ms: number): string {
   return `${m}m ${s}s`;
 }
 
-const RANK_LABEL = ["", "1st", "2nd", "3rd"];
-const RANK_COLOR = ["", "#fbbf24", "#cbd5e1", "#d48c54"];
-
-function roundRect(
+/** Draw several text segments (with different fonts/colors) as one centered line. */
+function drawMixedCentered(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
+  centerX: number,
+  baselineY: number,
+  segments: Array<{ text: string; font: string; color: string }>,
 ) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  const widths = segments.map((s) => {
+    ctx.font = s.font;
+    return ctx.measureText(s.text).width;
+  });
+  const total = widths.reduce((a, b) => a + b, 0);
+  let x = centerX - total / 2;
+  segments.forEach((s, i) => {
+    ctx.font = s.font;
+    ctx.fillStyle = s.color;
+    ctx.fillText(s.text, x, baselineY);
+    x += widths[i];
+  });
 }
 
-function drawMedal(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, rank: number) {
-  const color = RANK_COLOR[rank] || GOLD;
-  // Ribbons
-  ctx.fillStyle = rank === 1 ? "#3b82f6" : rank === 2 ? "#64748b" : "#b45309";
-  ctx.beginPath();
-  ctx.moveTo(cx - size * 0.42, cy - size * 0.28);
-  ctx.lineTo(cx - size * 0.16, cy - size * 0.02);
-  ctx.lineTo(cx - size * 0.05, cy - size * 0.28);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(cx + size * 0.42, cy - size * 0.28);
-  ctx.lineTo(cx + size * 0.16, cy - size * 0.02);
-  ctx.lineTo(cx + size * 0.05, cy - size * 0.28);
-  ctx.closePath();
-  ctx.fill();
-
-  // Medal disc
-  const grad = ctx.createRadialGradient(cx - size * 0.1, cy - size * 0.12, size * 0.05, cx, cy, size * 0.5);
-  grad.addColorStop(0, "#fff3cf");
-  grad.addColorStop(0.55, color);
-  grad.addColorStop(1, "#8a6116");
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Inner ring
-  ctx.strokeStyle = "rgba(255,255,255,0.55)";
-  ctx.lineWidth = size * 0.045;
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.38, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Rank number
-  ctx.fillStyle = "#3a2a05";
-  ctx.font = `900 ${Math.round(size * 0.42)}px ${SERIF}`;
+/** Stamp the winner's name centered on the blank name line of the template. */
+function drawName(ctx: CanvasRenderingContext2D, name: string) {
+  // Auto-fit long names inside the blank line (x 351–1121 → max ~720px).
+  const maxWidth = 720;
+  let fontPx = 44;
   ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(String(rank), cx, cy + size * 0.02);
+  ctx.textBaseline = "alphabetic";
+  const fits = (px: number) => {
+    ctx.font = `700 ${px}px ${SERIF}`;
+    return ctx.measureText(name).width <= maxWidth;
+  };
+  while (fontPx > 24 && !fits(fontPx)) fontPx -= 2;
+  ctx.font = `700 ${fontPx}px ${SERIF}`;
+  ctx.fillStyle = NAVY;
+  ctx.fillText(name, NAME_CENTER_X, NAME_BASELINE_Y);
+}
+
+/** Stamp "has secured <POSITION>" — navy text + gold position word, centered. */
+function drawPositionLine(ctx: CanvasRenderingContext2D, rank: 1 | 2 | 3) {
+  const word = RANK_WORDS[rank] ?? RANK_WORDS[1];
+  drawMixedCentered(ctx, POSITION_LINE_CENTER_X, POSITION_LINE_BASELINE_Y, [
+    { text: "has secured ", font: `500 15px ${SERIF}`, color: NAVY },
+    { text: word, font: `700 30px ${SERIF}`, color: GOLD },
+  ]);
+}
+
+/** Stamp the award date onto the template's blank DATE line. */
+function drawDate(ctx: CanvasRenderingContext2D, date?: Date) {
+  const label = (date ?? new Date()).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `500 18px ${SERIF}`;
+  ctx.fillStyle = NAVY;
+  ctx.fillText(label, DATE_CENTER_X, DATE_BASELINE_Y);
+}
+
+/** Draw the completed certificate onto an existing 2D context. */
+export async function drawCertificate(
+  ctx: CanvasRenderingContext2D,
+  student: CertificateStudent,
+  opts: CertificateOptions = {},
+) {
+  const img = await loadTemplate();
+  ctx.drawImage(img, 0, 0, W, H);
+
+  // Erase the template's pre-printed "has secured FIRST POSITION" line so the
+  // correct position can be stamped for this student (covers x 500–960,
+  // y 685–712 — well clear of the left badge / right trophy art).
+  ctx.fillStyle = BG;
+  ctx.fillRect(500, 685, 462, 28);
+
+  drawName(ctx, student.name);
+  drawPositionLine(ctx, student.rank);
+  drawDate(ctx, opts.date);
 }
 
 /** Draw the certificate and return its PNG data URL. */
-export function certificateDataURL(
+export async function certificateDataURL(
   student: CertificateStudent,
   opts: CertificateOptions = {},
-): string {
+): Promise<string> {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D not supported");
-
-  drawCertificate(ctx, student, opts);
+  await drawCertificate(ctx, student, opts);
   return canvas.toDataURL("image/png");
 }
 
-export function drawCertificate(
-  ctx: CanvasRenderingContext2D,
-  student: CertificateStudent,
-  opts: CertificateOptions = {},
-) {
-  const eventName =
-    opts.eventName ??
-    (opts.mode === "test"
-      ? "IT Club Championship — TEST MODE · 60 Questions"
-      : "IT Club Championship — Technical Battle");
-  const date = (opts.date ?? new Date()).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-  const clubLabel = student.club === "STACK_PUSH" ? "Stack.push" : "IT Innovators";
-  const clubColor = student.club === "STACK_PUSH" ? "#60a5fa" : "#34d399";
-
-  // ── Background ──
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, "#0b1120");
-  bg.addColorStop(0.5, "#131d36");
-  bg.addColorStop(1, "#0b1120");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
-
-  // Radial glow behind the name
-  const glow = ctx.createRadialGradient(W / 2, H * 0.44, 60, W / 2, H * 0.44, W * 0.55);
-  glow.addColorStop(0, "rgba(245, 197, 66, 0.16)");
-  glow.addColorStop(1, "rgba(245, 197, 66, 0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, W, H);
-
-  // ── Outer + inner gold frames ──
-  ctx.strokeStyle = GOLD_DIM;
-  ctx.lineWidth = 4;
-  roundRect(ctx, 42, 42, W - 84, H - 84, 28);
-  ctx.stroke();
-
-  ctx.strokeStyle = GOLD;
-  ctx.lineWidth = 2;
-  roundRect(ctx, 60, 60, W - 120, H - 120, 22);
-  ctx.stroke();
-
-  // Corner ornaments
-  const corner = (x: number, y: number, flipX: number, flipY: number) => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(flipX, flipY);
-    ctx.strokeStyle = GOLD;
-    ctx.lineWidth = 6;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(0, 88);
-    ctx.lineTo(0, 0);
-    ctx.lineTo(88, 0);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, 56);
-    ctx.lineTo(0, 0);
-    ctx.lineTo(56, 0);
-    ctx.strokeStyle = GOLD_LIGHT;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  };
-  corner(78, 78, 1, 1);
-  corner(W - 78, 78, -1, 1);
-  corner(78, H - 78, 1, -1);
-  corner(W - 78, H - 78, -1, -1);
-
-  // ── Medal ──
-  drawMedal(ctx, W / 2, 205, 150, student.rank);
-
-  // ── Header ──
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = GOLD;
-  ctx.font = `700 40px ${SANS}`;
-  ctx.fillText("C E R T I F I C A T E   O F   E X C E L L E N C E", W / 2, 330);
-  ctx.fillStyle = MUTED;
-  ctx.font = `500 28px ${SANS}`;
-  ctx.fillText(eventName.toUpperCase(), W / 2, 382);
-
-  // ── Presented to ──
-  ctx.fillStyle = MUTED;
-  ctx.font = `500 30px ${SANS}`;
-  ctx.fillText("THIS CERTIFICATE IS PROUDLY PRESENTED TO", W / 2, 470);
-
-  ctx.fillStyle = GOLD_LIGHT;
-  ctx.font = `800 96px ${SERIF}`;
-  ctx.fillText(student.name, W / 2, 600);
-
-  // Underline flourish
-  ctx.strokeStyle = GOLD_DIM;
-  ctx.lineWidth = 2;
-  const lineW = Math.min(760, 240 + student.name.length * 34);
-  ctx.beginPath();
-  ctx.moveTo(W / 2 - lineW / 2, 640);
-  ctx.lineTo(W / 2 - lineW / 6, 640);
-  ctx.moveTo(W / 2 + lineW / 6, 640);
-  ctx.lineTo(W / 2 + lineW / 2, 640);
-  ctx.stroke();
-
-  // Club badge
-  ctx.fillStyle = clubColor;
-  ctx.font = `700 32px ${SANS}`;
-  ctx.fillText(`${clubLabel === "Stack.push" ? "⚡" : "🚀"} ${clubLabel}`, W / 2, 700);
-
-  // ── Stats row ──
-  const stats: Array<{ label: string; value: string }> = [
-    { label: "RANK", value: RANK_LABEL[student.rank] ?? String(student.rank) },
-    { label: "FINAL SCORE", value: `${student.score} pts` },
-    { label: "CORRECT ANSWERS", value: `${student.correctCount} / ${Math.max(student.attemptCount, student.correctCount)}` },
-    { label: "TOTAL ANSWER TIME", value: formatDuration(student.totalResponseMs) },
-  ];
-  const boxW = 300;
-  const gap = 36;
-  const totalW = stats.length * boxW + (stats.length - 1) * gap;
-  let bx = (W - totalW) / 2;
-  const by = 760;
-  const bh = 150;
-  for (const s of stats) {
-    ctx.fillStyle = "rgba(245, 197, 66, 0.07)";
-    roundRect(ctx, bx, by, boxW, bh, 16);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(245, 197, 66, 0.35)";
-    ctx.lineWidth = 1.5;
-    roundRect(ctx, bx, by, boxW, bh, 16);
-    ctx.stroke();
-
-    ctx.fillStyle = MUTED;
-    ctx.font = `700 22px ${SANS}`;
-    ctx.fillText(s.label, bx + boxW / 2, by + 44);
-    ctx.fillStyle = GOLD_LIGHT;
-    ctx.font = `800 40px ${SANS}`;
-    ctx.fillText(s.value, bx + boxW / 2, by + 108);
-    bx += boxW + gap;
-  }
-
-  // ── Date + signature ──
-  ctx.fillStyle = MUTED;
-  ctx.font = `500 26px ${SANS}`;
-  ctx.textAlign = "left";
-  ctx.fillText(`Date: ${date}`, 130, H - 120);
-  ctx.textAlign = "right";
-  ctx.fillText("QuizMaster · IT Club", W - 130, H - 120);
-  ctx.strokeStyle = "rgba(255,255,255,0.35)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(W - 340, H - 148);
-  ctx.lineTo(W - 130, H - 148);
-  ctx.stroke();
-
-  ctx.textAlign = "center";
-  ctx.fillStyle = "rgba(159, 176, 204, 0.55)";
-  ctx.font = `500 22px ${SANS}`;
-  ctx.fillText("Awarded for speed, accuracy & knowledge", W / 2, H - 70);
-}
-
 /** Build a full certificate PNG and trigger a browser download. */
-export function downloadCertificatePNG(
+export async function downloadCertificatePNG(
   student: CertificateStudent,
   opts: CertificateOptions = {},
 ) {
-  const dataUrl = certificateDataURL(student, opts);
+  const dataUrl = await certificateDataURL(student, opts);
   const a = document.createElement("a");
   const safe = student.name.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "") || "student";
   a.href = dataUrl;
-  a.download = `certificate_${RANK_LABEL[student.rank] ?? student.rank}_${safe}.png`;
+  a.download = `certificate_${RANK_SHORT[student.rank] ?? student.rank}_${safe}.png`;
   document.body.appendChild(a);
   a.click();
   a.remove();

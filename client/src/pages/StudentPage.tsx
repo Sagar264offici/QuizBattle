@@ -144,6 +144,16 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     IT_INNOVATORS: 0,
   });
 
+  // 🏆 Winners (top 3) — fetched when the quiz finishes so students see the
+  // podium right on their phone the moment the winner is declared.
+  const [topStudents, setTopStudents] = useState<Array<{
+    rank: number;
+    name: string;
+    club: string;
+    score: number;
+    correctCount: number;
+  }>>([]);
+
   // A question is only shown after the host actually starts it. On first
   // login / reload a leftover or stale question NEVER appears — the student
   // stays on "WAITING FOR HOST TO START" until a countdown start is observed.
@@ -286,13 +296,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   const syncLeaderboard = async () => {
     try {
-      const data = await fetchJson<{ clubs: Array<{ name: string; score: number }> }>("/api/leaderboard", undefined, mode);
+      const data = await fetchJson<{
+        clubs: Array<{ name: string; score: number }>;
+        topStudents?: Array<{ rank: number; name: string; club: string; score: number; correctCount: number }>;
+      }>("/api/leaderboard", undefined, mode);
       if (data.clubs) {
         setClubScores({
           STACK_PUSH: data.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
           IT_INNOVATORS: data.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
         });
       }
+      if (data.topStudents) setTopStudents(data.topStudents);
     } catch (_) {}
   };
 
@@ -1197,35 +1211,112 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <span />
               </div>
             </div>
-          ) : (
-            /* WAITING (between questions) OR FINISHED STATE */
-            <div className="status-state-card" style={{ padding: "36px 20px" }}>
-              <div className="status-icon-bubble">
-                {status === "FINISHED" ? "🏆" : "⚡"}
+          ) : status === "FINISHED" ? (
+            /* 🏆 FINISHED — winners declared, shown right on the student's phone */
+            <div className="status-state-card" style={{ padding: "30px 18px" }}>
+              <div className="status-icon-bubble">🏆</div>
+              <h2 style={{ fontSize: "1.5rem", fontWeight: 900, marginTop: "10px" }}>
+                QUIZ BATTLE FINISHED!
+              </h2>
+              <p style={{ color: "var(--text-muted)", margin: "8px auto 0" }}>
+                The winner has been declared — here are your champions 🎉
+              </p>
+
+              {/* Winning club banner */}
+              {(() => {
+                const stack = clubScores.STACK_PUSH;
+                const innov = clubScores.IT_INNOVATORS;
+                const champion =
+                  stack > innov ? "STACK_PUSH" : innov > stack ? "IT_INNOVATORS" : null;
+                const championColor = champion === "STACK_PUSH" ? "#60a5fa" : "#34d399";
+                return (
+                  <div
+                    style={{
+                      marginTop: "16px",
+                      padding: "12px 14px",
+                      borderRadius: "12px",
+                      border: `2px solid ${champion ? championColor : "#fbbf24"}`,
+                      background: champion
+                        ? `linear-gradient(135deg, ${championColor}22, rgba(255,255,255,0.03))`
+                        : "rgba(251, 191, 36, 0.1)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 900, fontSize: "1.05rem", color: champion ? championColor : "#fbbf24" }}>
+                      {champion
+                        ? `🏆 ${champion === "STACK_PUSH" ? "⚡ Stack.push" : "🚀 IT Innovators"} is the CHAMPION CLUB!`
+                        : "🤝 It's a TIE between the clubs!"}
+                    </div>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-muted)", marginTop: "4px" }}>
+                      ⚡ Stack.push {stack} pts &nbsp;·&nbsp; 🚀 IT Innovators {innov} pts
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Top 3 podium */}
+              {topStudents.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "16px" }}>
+                  {topStudents.map((s, idx) => (
+                    <div
+                      key={s.name + s.club + s.rank}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        padding: "10px 12px",
+                        borderRadius: "12px",
+                        background:
+                          idx === 0
+                            ? "linear-gradient(135deg, rgba(251, 191, 36, 0.16), rgba(245, 158, 11, 0.05))"
+                            : "rgba(255,255,255,0.04)",
+                        border: idx === 0 ? "1.5px solid rgba(251, 191, 36, 0.4)" : "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      <span style={{ fontSize: "1.8rem" }}>{["🥇", "🥈", "🥉"][idx]}</span>
+                      <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, fontSize: "1.05rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.name}
+                        </div>
+                        <div style={{ fontSize: "0.78rem", fontWeight: 700, color: s.club === "STACK_PUSH" ? "#60a5fa" : "#34d399" }}>
+                          {s.club === "STACK_PUSH" ? "⚡ Stack.push" : "🚀 IT Innovators"} · {s.score} pts · ✓ {s.correctCount}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: "0.8rem", fontWeight: 900, color: ["#fbbf24", "#cbd5e1", "#d48c54"][idx] }}>
+                        {["1st", "2nd", "3rd"][idx]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Student's own standing */}
+              <div style={{ marginTop: "14px", fontSize: "0.95rem", fontWeight: 800, color: "#fbbf24" }}>
+                Your score: {participant.score} pts
+                {topStudents.some((t) => t.name === participant.name)
+                  ? " — you're on the podium! 🎉"
+                  : " — thanks for battling!"}
               </div>
+
+              <a
+                href={mode === "test" ? "/test/results" : "/results"}
+                className="btn btn-warning btn-lg"
+                style={{ marginTop: "18px", fontWeight: 900, fontSize: "1rem" }}
+              >
+                🏆 View Final Results & Certificates
+              </a>
+            </div>
+          ) : (
+            /* WAITING (between questions) */
+            <div className="status-state-card" style={{ padding: "36px 20px" }}>
+              <div className="status-icon-bubble">⚡</div>
               <h2 style={{ fontSize: "1.5rem", fontWeight: 800, marginTop: "10px" }}>
-                {status === "FINISHED"
-                  ? "QUIZ BATTLE FINISHED!"
-                  : quizStarted
-                    ? "Waiting for Host to Start Question..."
-                    : "Waiting for Host to Start..."}
+                {quizStarted ? "Waiting for Host to Start Question..." : "Waiting for Host to Start..."}
               </h2>
               <p style={{ color: "var(--text-muted)", maxWidth: 480, margin: "8px auto 0" }}>
-                {status === "FINISHED"
-                  ? "Thank you for participating! Check the big projector screen for final results."
-                  : quizStarted
-                    ? "As soon as the host launches the question, a 5-second countdown will appear followed by a timer to answer!"
-                    : "The host will start the quiz from their dashboard. When a question starts, it will appear here automatically."}
+                {quizStarted
+                  ? "As soon as the host launches the question, a 5-second countdown will appear followed by a timer to answer!"
+                  : "The host will start the quiz from their dashboard. When a question starts, it will appear here automatically."}
               </p>
-              {status === "FINISHED" && (
-                <a
-                  href={mode === "test" ? "/test/results" : "/results"}
-                  className="btn btn-warning btn-lg"
-                  style={{ marginTop: "18px", fontWeight: 900, fontSize: "1rem" }}
-                >
-                  🏆 View Final Results & Certificates
-                </a>
-              )}
             </div>
           )}
         </div>
