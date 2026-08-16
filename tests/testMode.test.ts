@@ -24,6 +24,9 @@ describe("Test mode — 60-question isolated quiz + global student logout", () =
   });
 
   afterAll(async () => {
+    // Leave the shared Redis store clean so no test students leak into the app.
+    await api("/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
+    await api("/test/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 

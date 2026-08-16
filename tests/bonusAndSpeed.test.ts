@@ -73,6 +73,9 @@ describe("Fastest-streak bonus + speed-based ranking (test mode)", () => {
   });
 
   afterAll(async () => {
+    // Leave the shared Redis store clean so no test students leak into the app.
+    await api("/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
+    await api("/test/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 

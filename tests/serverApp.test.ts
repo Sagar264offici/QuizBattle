@@ -18,6 +18,17 @@ describe("Express App API Routes", () => {
   });
 
   afterAll(async () => {
+    // Leave the shared Redis store clean so no test students leak into the app.
+    await fetch(`${baseUrl}/api/admin/reset-all-fresh`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: "{}",
+    });
+    await fetch(`${baseUrl}/api/test/admin/reset-all-fresh`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: "{}",
+    });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 

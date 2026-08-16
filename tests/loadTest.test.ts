@@ -120,6 +120,10 @@ describe("Production-readiness load rehearsal — 60 concurrent students (test m
     console.log("\n════════════ LOAD TEST REPORT ════════════");
     console.log(JSON.stringify(metrics, null, 2));
     console.log("══════════════════════════════════════════");
+    // Leave the shared Redis store clean — the 60 rehearsal students must not
+    // persist into the app after the rehearsal.
+    await api(`/${MODE}/admin/reset-all-fresh`, { method: "POST", headers: adminHeaders, body: "{}" });
+    await api(`/admin/reset-all-fresh`, { method: "POST", headers: adminHeaders, body: "{}" });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 

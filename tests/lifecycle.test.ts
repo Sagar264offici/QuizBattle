@@ -60,6 +60,9 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
   });
 
   afterAll(async () => {
+    // Leave the shared Redis store clean so no test students leak into the app.
+    await reset("live");
+    await reset("test");
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 

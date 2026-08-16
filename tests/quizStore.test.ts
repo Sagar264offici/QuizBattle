@@ -26,6 +26,9 @@ describe("Redis-backed quiz API behavior", () => {
   });
 
   afterAll(async () => {
+    // Leave the shared Redis store clean so no test students leak into the app.
+    await request("/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
+    await request("/test/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
