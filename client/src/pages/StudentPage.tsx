@@ -1217,6 +1217,15 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                     ? "As soon as the host launches the question, a 5-second countdown will appear followed by a timer to answer!"
                     : "The host will start the quiz from their dashboard. When a question starts, it will appear here automatically."}
               </p>
+              {status === "FINISHED" && (
+                <a
+                  href={mode === "test" ? "/test/results" : "/results"}
+                  className="btn btn-warning btn-lg"
+                  style={{ marginTop: "18px", fontWeight: 900, fontSize: "1rem" }}
+                >
+                  🏆 View Final Results & Certificates
+                </a>
+              )}
             </div>
           )}
         </div>

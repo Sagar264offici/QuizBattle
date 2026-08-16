@@ -1895,74 +1895,37 @@ async function countRegisteredParticipants(mode: QuizMode): Promise<number> {
   return typeof res === "number" ? res : 0;
 }
 
-async function getSubmission(pid: number, qid: number, mode: QuizMode = "live") {
-  const raw = await redis.get<string>(quizKeys(mode).submission(pid, qid));
-  if (!raw) return null;
-  try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
-}
-
-// Atomically record a submission only if the participant has not already
-// submitted for this question. SET ... NX is atomic on Redis, so two (or a
-// hundred) simultaneous submissions from the same participant can never both
-// pass — exactly one wins, the rest are rejected as duplicates.
-async function saveSubmissionIfAbsent(sub: any, mode: QuizMode = "live"): Promise<boolean> {
-  const res = await redisCommand([
-    "SET",
-    quizKeys(mode).submission(sub.participantId, sub.questionId),
-    JSON.stringify(sub),
-    "EX",
-    86400,
-    "NX",
-  ]);
-  return res === "OK";
-}
-
-// Atomically record the fastest correct answer for a question. EVAL runs as a
-// single atomic unit on Redis, so near-simultaneous correct submissions can
-// never both overwrite the leaderboard — only a genuinely faster response wins.
-const FASTEST_LUA = `
-local key = KEYS[1]
-local latestKey = KEYS[2]
-local newTime = tonumber(ARGV[1])
-local json = ARGV[2]
-local cur = redis.call('GET', key)
-local curTime
-if cur then
-  local ok, obj = pcall(cjson.decode, cur)
-  if ok and obj and obj.responseTimeMs then curTime = tonumber(obj.responseTimeMs) end
+// ── Atomically save a submission AND record the fastest correct tap ──
+// Runs as a single atomic unit on Redis. Returns:
+//   "OK_FASTEST" — submission saved AND this is (still) the fastest correct answer
+//   "OK"         — submission saved, but not the fastest
+//   "DUPLICATE"  — the participant already submitted for this question (SET NX
+//                  failed); the fastest record is NEVER touched in this case,
+//                  so a rejected duplicate can never hijack the leaderboard.
+// The fastest tap is only ever overwritten by a genuinely faster ACCEPTED
+// submission.
+const SUBMIT_LUA = `
+local saved = redis.call('SET', KEYS[1], ARGV[1], 'EX', 86400, 'NX')
+if not saved then
+  return 'DUPLICATE'
 end
-if (not curTime) or newTime < curTime then
-  redis.call('SET', key, json, 'EX', 86400)
-  redis.call('SET', latestKey, json, 'EX', 86400)
-  return 1
+local isFastest = 0
+if ARGV[3] ~= '' then
+  local cur = redis.call('GET', KEYS[2])
+  local curTime
+  if cur then
+    local ok, obj = pcall(cjson.decode, cur)
+    if ok and obj and obj.responseTimeMs then curTime = tonumber(obj.responseTimeMs) end
+  end
+  if (not curTime) or tonumber(ARGV[2]) < curTime then
+    redis.call('SET', KEYS[2], ARGV[3], 'EX', 86400)
+    redis.call('SET', KEYS[3], ARGV[3], 'EX', 86400)
+    isFastest = 1
+  end
 end
-return 0
+if isFastest == 1 then return 'OK_FASTEST' end
+return 'OK'
 `;
-
-async function recordFastestIfFaster(mode: QuizMode, qid: number, fastestObj: any): Promise<boolean> {
-  const keys = quizKeys(mode);
-  const res = await redisCommand([
-    "EVAL",
-    FASTEST_LUA,
-    "2",
-    keys.fastest(qid),
-    keys.fastestLatest,
-    String(fastestObj.responseTimeMs),
-    JSON.stringify(fastestObj),
-  ]);
-  return res === 1;
-}
-
-async function getClubScore(club: string, mode: QuizMode = "live"): Promise<number> {
-  const v = await redis.get<string>(quizKeys(mode).clubScore(club));
-  return v ? parseInt(String(v), 10) || 0 : 0;
-}
-
-async function addClubScore(club: string, pts: number, mode: QuizMode = "live") {
-  if (pts > 0) {
-    await redis.incrby(quizKeys(mode).clubScore(club), pts);
-  }
-}
 
 // ── Mode-scoped data cleanup ─────────────────────────────────────────────────
 
@@ -2258,8 +2221,12 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         p.wrongCount = 0;
         p.attemptCount = 0;
         p.correctResponseMs = 0;
+        p.totalResponseMs = 0;
         p.fastestStreak = 0;
         p.bonusPoints = 0;
+        p.lastQuestionId = null;
+        p.lastAnswer = null;
+        p.lastSubmittedAt = null;
         await redis.set(keys.participantKey(p.sessionToken), JSON.stringify(p), { ex: 86400 });
         for (const qid of getQuestionIds(mode)) {
           await redisCommand(["DEL", keys.submission(p.id, qid)]);
@@ -2461,27 +2428,36 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       return true;
     });
 
-    const members = await Promise.all(
-      unique.map(async (p) => {
-        const submitted = currentQ ? !!(await getSubmission(p.id, currentQ.id, mode)) : false;
-        return {
-          id: Number(p.id) || 0,
-          name: String(p.name || ""),
-          club: String(p.club || ""),
-          joinedAt: p.joinedAt ?? null,
-          score: p.score || 0,
-          correctCount: p.correctCount || 0,
-          wrongCount: p.wrongCount || 0,
-          attemptCount: p.attemptCount || 0,
-          correctResponseMs: p.correctResponseMs || 0,
-          fastestStreak: p.fastestStreak || 0,
-          bonusPoints: p.bonusPoints || 0,
-          submitted,
-          // Admin-only endpoint — token needed for the individual kick action.
-          sessionToken: String(p.sessionToken || ""),
-        };
-      })
-    );
+    // Fetch every participant's submission for the current question in ONE
+    // batched round-trip instead of N concurrent HTTPS calls.
+    let submittedByPid = new Map<number, boolean>();
+    if (currentQ && unique.length > 0) {
+      const subResults = await redisPipeline(unique.map((p) => ["GET", quizKeys(mode).submission(p.id, currentQ.id)]));
+      if (Array.isArray(subResults)) {
+        submittedByPid = new Map(unique.map((p, i) => [Number(p.id) || 0, !!subResults[i]]));
+      }
+    }
+
+    const members = unique.map((p) => {
+      const submitted = currentQ ? submittedByPid.get(Number(p.id) || 0) ?? false : false;
+      return {
+        id: Number(p.id) || 0,
+        name: String(p.name || ""),
+        club: String(p.club || ""),
+        joinedAt: p.joinedAt ?? null,
+        score: p.score || 0,
+        correctCount: p.correctCount || 0,
+        wrongCount: p.wrongCount || 0,
+        attemptCount: p.attemptCount || 0,
+        correctResponseMs: p.correctResponseMs || 0,
+        totalResponseMs: p.totalResponseMs || 0,
+        fastestStreak: p.fastestStreak || 0,
+        bonusPoints: p.bonusPoints || 0,
+        submitted,
+        // Admin-only endpoint — token needed for the individual kick action.
+        sessionToken: String(p.sessionToken || ""),
+      };
+    });
 
     members.sort(compareParticipants);
     res.json({
@@ -2537,7 +2513,10 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       club: String(p.club || ""),
       score: p.score || 0,
       correctCount: p.correctCount || 0,
+      wrongCount: p.wrongCount || 0,
+      attemptCount: p.attemptCount || 0,
       correctResponseMs: p.correctResponseMs || 0,
+      totalResponseMs: p.totalResponseMs || 0,
       fastestStreak: p.fastestStreak || 0,
       bonusPoints: p.bonusPoints || 0,
       joinedAt: p.joinedAt ?? null,
@@ -2611,7 +2590,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const gen = await getSessionGen(mode);
 
       const token = encodeToken({ id, name: n, club: String(club), gen });
-      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, fastestStreak: 0, bonusPoints: 0, joinedAt: new Date().toISOString() };
+      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, totalResponseMs: 0, fastestStreak: 0, bonusPoints: 0, joinedAt: new Date().toISOString() };
       await saveParticipant(participant, mode);
       res.json({ ok: true, participant });
     } catch (err: any) {
@@ -2684,6 +2663,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
           wrongCount: 0,
           attemptCount: 0,
           correctResponseMs: 0,
+          totalResponseMs: 0,
           fastestStreak: 0,
           bonusPoints: 0,
           joinedAt: new Date().toISOString(),
@@ -2719,7 +2699,10 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     }
 
     const currentQ = getQuestion(state.currentQuestionId, mode);
-    const submission = currentQ ? await getSubmission(participant.id, currentQ.id, mode) : null;
+    // hasSubmitted / userSubmission come straight from the participant record
+    // (kept in sync by the submission handler), so this poll stays a SINGLE
+    // pipelined Redis round-trip — no extra per-student submission GET.
+    const hasSubmitted = !!currentQ && Number(participant.lastQuestionId) === currentQ.id;
     // Students never see a question while the host is preparing or between
     // questions. During COUNTDOWN the sanitized question IS preloaded so every
     // device can reveal it at the exact same moment countdownEndsAt passes —
@@ -2731,9 +2714,17 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state.status === "COUNTDOWN";
 
     res.json({
-      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, correctResponseMs: participant.correctResponseMs || 0, fastestStreak: participant.fastestStreak || 0, bonusPoints: participant.bonusPoints || 0, sessionToken: participant.sessionToken },
-      hasSubmitted: !!submission,
-      userSubmission: sanitizeSubmission(submission),
+      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, correctResponseMs: participant.correctResponseMs || 0, totalResponseMs: participant.totalResponseMs || 0, fastestStreak: participant.fastestStreak || 0, bonusPoints: participant.bonusPoints || 0, sessionToken: participant.sessionToken },
+      hasSubmitted,
+      userSubmission:
+        hasSubmitted && participant.lastAnswer
+          ? {
+              answer: String(participant.lastAnswer),
+              questionId: currentQ?.id ?? null,
+              questionNumber: currentQ?.questionNumber ?? null,
+              submittedAt: participant.lastSubmittedAt ?? null,
+            }
+          : null,
       currentQuestion: showQuestion && currentQ ? sanitizeQuestion(currentQ) : null,
       sessionStatus: state.status,
       countdownEndsAt: state.countdownEndsAt,
@@ -2744,17 +2735,107 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   });
 
   // ── Answer Submission ───────────────────────────────────────────────────────
+  /**
+   * Speed-critical path: a student tap must feel instant even with hundreds of
+   * students submitting simultaneously. The whole handler runs in ~3 batched
+   * Redis round-trips instead of ~9 sequential HTTPS calls:
+   *   1. pipeline: session generation + kicked-check + participant record +
+   *      quiz state (one request)
+   *   2. pipeline: atomic SET NX submission + fastest-tap EVAL (one request)
+   *   3. pipeline: persist participant record + roster + club totals (one
+   *      request)
+   * Scoring logic is byte-for-byte the same as before — only the transport is
+   * batched.
+   */
   router.post(`${prefix}/questions/submit`, async (req, res) => {
     try {
       const { token, answer, questionId } = req.body ?? {};
       const rawToken = String(token || "");
-      const participant = await getParticipant(rawToken, mode);
-      if (!participant) {
-        const rejection = await participantRejection(rawToken, mode);
-        return res.status(rejection.status).json({ error: rejection.error, code: rejection.code });
+      const keys = quizKeys(mode);
+
+      // ── Round-trip 1: everything needed to validate the submission ──
+      const results = await redisPipeline([
+        ["GET", keys.sessionGen],
+        ["SISMEMBER", keys.kickedTokens, rawToken],
+        ["HGET", keys.participantsMap, rawToken],
+        ["GET", keys.state],
+      ]);
+      if (results === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+      const [genRaw, kicked, hashRaw, stateRaw] = Array.isArray(results) ? results : [undefined, undefined, undefined, undefined];
+
+      const currentGen = (() => {
+        const n = genRaw ? parseInt(String(genRaw), 10) : 0;
+        return n > 0 ? n : 1;
+      })();
+
+      // Kicked students are rejected immediately — no further lookups needed.
+      if (kicked === 1) {
+        return res.status(401).json({ code: "PARTICIPANT_KICKED", error: "You were removed by the host." });
       }
 
-      const state = await getState(mode);
+      // Participant lookup: participants hash first (already in the pipeline),
+      // then participant-key fallback, then pure token decoding. The happy path
+      // costs zero extra Redis calls.
+      let participant: any = null;
+      if (hashRaw) {
+        try {
+          const p = typeof hashRaw === "string" ? JSON.parse(hashRaw) : hashRaw;
+          if (p?.name) participant = p;
+        } catch (_) {}
+      }
+      if (!participant) {
+        const keyRaw = await redis.get<string>(keys.participantKey(rawToken));
+        if (keyRaw) {
+          try {
+            const p = typeof keyRaw === "string" ? JSON.parse(keyRaw) : keyRaw;
+            if (p?.name) participant = p;
+          } catch (_) {}
+        }
+      }
+      if (!participant) {
+        const d = decodeToken(rawToken);
+        if (d && d.gen === currentGen) {
+          participant = {
+            id: d.id,
+            name: d.name,
+            club: d.club,
+            sessionToken: rawToken,
+            gen: d.gen,
+            score: 0,
+            correctCount: 0,
+            wrongCount: 0,
+            attemptCount: 0,
+            correctResponseMs: 0,
+            totalResponseMs: 0,
+            fastestStreak: 0,
+            bonusPoints: 0,
+            joinedAt: new Date().toISOString(),
+          };
+        }
+      }
+
+      if (!participant) {
+        const d = decodeToken(rawToken);
+        if (d && d.gen !== currentGen) {
+          return res.status(401).json({ code: "SESSION_EXPIRED", error: "Your session was ended by the host." });
+        }
+        return res.status(404).json({ error: "Participant not found" });
+      }
+      if ((Number(participant.gen) || 0) !== currentGen) {
+        return res.status(401).json({ code: "SESSION_EXPIRED", error: "Your session was ended by the host." });
+      }
+
+      // Quiz state with the same server-authoritative auto-transitions.
+      let state = parseState(stateRaw as string | null);
+      if (!state) {
+        state = { ...DEFAULT_STATE };
+      } else {
+        const before = JSON.stringify(state);
+        state = applyAutoTransitions(state, mode);
+        if (JSON.stringify(state) !== before) {
+          await redis.set(keys.state, JSON.stringify(state));
+        }
+      }
       if (state.status !== "LIVE") return res.status(400).json({ error: "Question is not live" });
 
       const currentQ = getQuestion(state.currentQuestionId, mode);
@@ -2769,8 +2850,43 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const responseTimeMs = Math.max(0, now - startedAt);
 
       const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs, submittedAt: new Date(now).toISOString() };
-      const saved = await saveSubmissionIfAbsent(sub, mode);
-      if (!saved) return res.status(400).json({ error: "Already submitted" });
+
+      // ── Round-trip 2: atomically save the submission (SET NX) AND record
+      // the fastest correct tap in ONE Lua script — a race or double-tap can
+      // never double-submit, and a rejected duplicate can never touch the
+      // fastest record.
+      const evalOut = await redisPipeline([
+        [
+          "EVAL",
+          SUBMIT_LUA,
+          "3",
+          keys.submission(participant.id, currentQ.id),
+          keys.fastest(currentQ.id),
+          keys.fastestLatest,
+          JSON.stringify(sub),
+          String(responseTimeMs),
+          isCorrect
+            ? JSON.stringify({
+                participantId: participant.id,
+                participantName: participant.name,
+                club: participant.club,
+                responseTimeMs,
+                responseTimeSec: (responseTimeMs / 1000).toFixed(2),
+                questionNumber: currentQ.questionNumber,
+                answer: a,
+              })
+            : "",
+        ],
+      ]);
+      if (evalOut === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+      const status2 = Array.isArray(evalOut) ? evalOut[0] : evalOut;
+      if (status2 === "DUPLICATE") return res.status(400).json({ error: "Already submitted" });
+      if (status2 !== "OK" && status2 !== "OK_FASTEST") {
+        // The store accepted the submission but returned an unexpected status —
+        // fail closed rather than risk double-scoring.
+        return res.status(400).json({ error: "Submission failed" });
+      }
+      const isFastest = status2 === "OK_FASTEST";
 
       participant.score = (participant.score || 0) + pointsAwarded;
       participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
@@ -2782,35 +2898,44 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       if (isCorrect) {
         participant.correctResponseMs = (participant.correctResponseMs || 0) + responseTimeMs;
       }
+      // Total timing across EVERY submitted answer (correct or not) — powers
+      // the final results table's "total time by answer submitted".
+      participant.totalResponseMs = (participant.totalResponseMs || 0) + responseTimeMs;
 
       let bonusAwarded = 0;
       // 🔥 FASTEST-STREAK BONUS: every 3 questions answered correctly AND
       // fastest in a row (contiguous) awards FASTEST_STREAK_BONUS extra points.
       // The streak resets on any wrong answer or when someone else was faster.
       if (isCorrect) {
-        const fastestObj = {
-          participantId: participant.id,
-          participantName: participant.name,
-          club: participant.club,
-          responseTimeMs,
-          responseTimeSec: (responseTimeMs / 1000).toFixed(2),
-          questionNumber: currentQ.questionNumber,
-          answer: a,
-        };
-        const isFastest = await recordFastestIfFaster(mode, currentQ.id, fastestObj);
         participant.fastestStreak = isFastest ? (participant.fastestStreak || 0) + 1 : 0;
         if ((participant.fastestStreak || 0) > 0 && (participant.fastestStreak || 0) % 3 === 0) {
           bonusAwarded = FASTEST_STREAK_BONUS;
           participant.bonusPoints = (participant.bonusPoints || 0) + bonusAwarded;
           participant.score = (participant.score || 0) + bonusAwarded;
-          await addClubScore(participant.club, bonusAwarded, mode);
         }
       } else {
         participant.fastestStreak = 0;
       }
 
-      await saveParticipant(participant, mode);
-      await addClubScore(participant.club, pointsAwarded, mode);
+      // Track the current-question submission on the participant record so the
+      // student session poll (hasSubmitted / userSubmission) needs no extra
+      // Redis round-trip.
+      participant.lastQuestionId = currentQ.id;
+      participant.lastAnswer = a;
+      participant.lastSubmittedAt = sub.submittedAt;
+
+      // ── Round-trip 3: persist participant + roster + club totals in one
+      // pipelined request.
+      const clubGain = pointsAwarded + bonusAwarded;
+      const cmds3: (string | number)[][] = [
+        ["SET", keys.participantKey(participant.sessionToken), JSON.stringify(participant), "EX", 86400],
+        ["HSET", keys.participantsMap, participant.sessionToken, JSON.stringify(participant)],
+        ["SADD", keys.participantTokens, participant.sessionToken],
+      ];
+      if (clubGain > 0) {
+        cmds3.push(["INCRBY", keys.clubScore(participant.club), clubGain]);
+      }
+      await redisPipeline(cmds3);
 
       res.json({
         ok: true,

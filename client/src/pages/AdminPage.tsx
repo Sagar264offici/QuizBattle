@@ -441,6 +441,13 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             >
               👥 Members / Participant Details
             </a>
+            <a
+              href={mode === "test" ? "/test/results" : "/results"}
+              className="btn btn-warning btn-sm"
+              title="Final ranking with each student's total timing + top-3 PNG certificates"
+            >
+              🏆 Results & Certificates
+            </a>
             <button className="btn btn-secondary btn-sm" onClick={copyStudentLink}>
               📋 Copy Student Link
             </button>

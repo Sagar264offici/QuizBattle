@@ -267,6 +267,22 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   ? "The quiz will begin shortly — keep your devices ready!"
                   : "Host will launch the 5-second countdown shortly"}
               </p>
+              {status === "FINISHED" && (
+                <a
+                  href={mode === "test" ? "/test/results" : "/results"}
+                  className="btn btn-warning btn-lg"
+                  style={{
+                    marginTop: "18px",
+                    fontSize: "1.3rem",
+                    fontWeight: 900,
+                    padding: "16px 34px",
+                    display: "inline-block",
+                    boxShadow: "0 0 30px rgba(245, 158, 11, 0.35)",
+                  }}
+                >
+                  🏆 VIEW FINAL RESULTS — TOP 3 + CERTIFICATES
+                </a>
+              )}
             </div>
           )}
         </div>

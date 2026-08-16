@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import AdminPage from "./pages/AdminPage";
 import DisplayPage from "./pages/DisplayPage";
 import MembersPage from "./pages/MembersPage";
+import ResultsPage from "./pages/ResultsPage";
 import StudentPage from "./pages/StudentPage";
 import "./styles.css";
 
@@ -28,6 +29,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/host/test/members" element={<MembersPage mode="test" />} />
         <Route path="/display" element={<DisplayPage />} />
         <Route path="/test/display" element={<DisplayPage mode="test" />} />
+        {/* Final results + top-3 PNG certificates */}
+        <Route path="/results" element={<ResultsPage />} />
+        <Route path="/admin/results" element={<ResultsPage />} />
+        <Route path="/test/results" element={<ResultsPage mode="test" />} />
+        <Route path="/admin/test/results" element={<ResultsPage mode="test" />} />
         <Route path="*" element={<StudentPage />} />
       </Routes>
     </BrowserRouter>

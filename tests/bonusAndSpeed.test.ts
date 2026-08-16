@@ -131,6 +131,39 @@ describe("Fastest-streak bonus + speed-based ranking (test mode)", () => {
     expect((a5.data as any).fastestStreak).toBe(0);
   });
 
+  it("accumulates totalResponseMs across every submitted answer (correct and wrong)", async () => {
+    const alice = await register("Timed Alice", "STACK_PUSH");
+
+    // Q1 — correct answer. totalResponseMs should include this response time.
+    const q1 = TEST_QUESTIONS[0];
+    await startQuestion(q1.questionNumber);
+    const s1 = await submit(alice.sessionToken, q1.id, q1.correctAnswer);
+    expect(s1.status).toBe(200);
+    const t1 = (s1.data as any).submission.responseTimeMs as number;
+    await advanceToWaiting();
+
+    // Q2 — WRONG answer. totalResponseMs grows again, correctResponseMs does not.
+    const q2 = TEST_QUESTIONS[1];
+    await startQuestion(q2.questionNumber);
+    const wrong = ["A", "B", "C", "D"].find((x) => x !== q2.correctAnswer) as string;
+    const s2 = await submit(alice.sessionToken, q2.id, wrong);
+    expect(s2.status).toBe(200);
+    const t2 = (s2.data as any).submission.responseTimeMs as number;
+    await advanceToWaiting();
+
+    const lb = await leaderboard();
+    const row = lb.students.find((s: any) => s.name === "Timed Alice");
+    // Total timing covers ALL answers submitted; correct-only timing covers just Q1.
+    expect(row.totalResponseMs).toBeGreaterThanOrEqual(t1 + t2);
+    expect(row.totalResponseMs).toBe(t1 + t2);
+    expect(row.correctResponseMs).toBeGreaterThanOrEqual(t1);
+    expect(row.correctResponseMs).toBe(t1);
+    expect(row.attemptCount).toBe(2);
+    expect(row.wrongCount).toBe(1);
+    // The score reflects only the correct answer (wrong = 0 pts, no bonus at streak 1).
+    expect(row.score).toBe(q1.points);
+  });
+
   it("ranks equal scorers by total correct-answer response time (faster wins)", async () => {
     const alice = await register("Speedy", "STACK_PUSH");
     const bob = await register("Leisurely", "IT_INNOVATORS");
