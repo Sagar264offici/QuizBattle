@@ -1,17 +1,18 @@
 /**
- * PRODUCTION-READINESS LOAD REHEARSAL — 80 concurrent students
+ * PRODUCTION-READINESS LOAD REHEARSAL — 60 concurrent students
  *
  * Runs against the REAL Upstash Redis (same store the deployed app uses) via
  * the Express app, exactly like the other API test files. The rehearsal runs
  * in TEST MODE (/api/test/...) so the live 100-question college quiz is never
  * disturbed, and it proves live/test isolation by comparing live-mode state
- * before and after the load.
+ * before and after the load. 60 is the test portal's maximum membership (the
+ * live event portal is unlimited), so the rehearsal exercises the full cap.
  *
  * Coverage (from the production-readiness checklist):
- *   1. 80 students join simultaneously
+ *   1. 60 students join simultaneously (test-portal cap)
  *   2. split between Stack.push and IT Innovators
- *   3. all 80 receive the same live question
- *   4. all 80 submit during the same 30s window
+ *   3. all 60 receive the same live question
+ *   4. all 60 submit during the same 30s window
  *   5. submissions occurring almost simultaneously (8×5-way bursts)
  *   6. no duplicate submissions accepted (race + sequential)
  *   7. server-side responseTimeMs is correct
@@ -19,7 +20,7 @@
  *   9. club scores == sum of participant scores
  *   10. fastest-correct leaderboard is correct (under simultaneous fire)
  *   11. admin starts the next question
- *   12. all 80 clients receive the new question
+ *   12. all 60 clients receive the new question
  *   13. admin locks the question
  *   14. late submissions rejected
  *   15. admin reveals the answer
@@ -27,9 +28,9 @@
  *   17. refresh students during LIVE
  *   18. refresh students during LOCKED
  *   19. refresh admin during LIVE
- *   20. Log Out All Students with 80 active participants
+ *   20. Log Out All Students with 60 active participants
  *   21. logout duration measured
- *   22. all 80 old sessions receive SESSION_EXPIRED on next request
+ *   22. all 60 old sessions receive SESSION_EXPIRED on next request
  *   23. old tokens cannot rejoin
  *   24. a new student can join afterward
  *   25. admin remains authenticated
@@ -45,7 +46,7 @@ import http from "node:http";
 import { app } from "../api/index";
 import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData";
 
-const STUDENT_COUNT = 80;
+const STUDENT_COUNT = 60;
 const MODE = "test";
 
 // ── Metrics gathered for the report ─────────────────────────────────────────
@@ -70,7 +71,7 @@ const metrics: Record<string, any> = {
 
 const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / (xs.length || 1);
 
-describe("Production-readiness load rehearsal — 80 concurrent students (test mode)", () => {
+describe("Production-readiness load rehearsal — 60 concurrent students (test mode)", () => {
   let server: http.Server;
   let baseUrl: string;
 
@@ -123,14 +124,14 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
   });
 
   it(
-    "rehearsal: 80 students join → answer → next question → lock → reveal → logout-all",
+    "rehearsal: 60 students join → answer → next question → lock → reveal → logout-all",
     async () => {
       // ── 26. Live-mode baseline (must be identical after the whole rehearsal) ──
       const liveBefore = await (await api("/admin/summary", { headers: adminHeaders })).json();
       const liveBeforeCount = liveBefore.participantsCount;
       const liveBeforeScore = liveBefore.clubs.reduce((s: number, c: any) => s + c.score, 0);
 
-      // ── 1+2. 80 students join simultaneously, split 40/40 across clubs ──
+      // ── 1+2. 60 students join simultaneously, split 30/30 across clubs ──
       const regStart = Date.now();
       const regs = await Promise.all(
         Array.from({ length: STUDENT_COUNT }, async (_, i) => {
@@ -162,7 +163,7 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
       const tokens = regs.map((r) => r.data.participant.sessionToken);
       const q1 = TEST_QUESTIONS[0];
 
-      // ── 3. Admin starts Q1; all 80 receive the same live question ──
+      // ── 3. Admin starts Q1; all 60 receive the same live question ──
       const start1 = await api(`/${MODE}/admin/start-question`, {
         method: "POST",
         headers: adminHeaders,
@@ -185,7 +186,7 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
         expect(p.data.correctAnswer).toBeNull();
       }
 
-      // ── 4+5. All 80 submit in the 30s window; 8 students fire 5-way
+      // ── 4+5. All 60 submit in the 30s window; 8 students fire 5-way
       //        simultaneous first submissions (race + fastest-tap stress) ──
       const wrongAnswer = (correct: string) => ["A", "B", "C", "D"].find((x) => x !== correct) as string;
       const answerFor = (idx: number) => (idx < 50 ? q1.correctAnswer : wrongAnswer(q1.correctAnswer));
@@ -254,7 +255,7 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
       };
 
       // ── 6b. Sequential duplicate submissions (double-tap) are rejected ──
-      const dupTargets = regs.slice(60, 66); // already submitted for Q1
+      const dupTargets = regs.slice(50, 56); // already submitted for Q1
       const dupResults = await Promise.all(
         dupTargets.flatMap((reg) =>
           Array.from({ length: 3 }, () => submit(MODE, reg.data.participant.sessionToken, q1.id, "A")),
@@ -303,7 +304,7 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
       expect(next.status).toBe(200);
       const q2 = TEST_QUESTIONS[1];
 
-      // ── 12. All 80 clients receive the new question ──
+      // ── 12. All 60 clients receive the new question ──
       const pollsWaiting = await Promise.all(tokens.map((t) => sessionPoll(MODE, t)));
       for (const p of pollsWaiting) {
         expect(p.status).toBe(200);
@@ -348,7 +349,7 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
       }
 
       // ── 14. Late submissions are rejected ──
-      const late = await Promise.all(tokens.slice(70, 76).map((t) => submit(MODE, t, q2.id, "A")));
+      const late = await Promise.all(tokens.slice(50, 56).map((t) => submit(MODE, t, q2.id, "A")));
       metrics.lateSubmissions = { attempted: late.length, rejected: late.filter((r) => r.status === 400).length };
       for (const r of late) {
         expect(r.status).toBe(400);
@@ -369,13 +370,13 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
         expect(p.data.correctAnswer).toBe(q2.correctAnswer);
       }
 
-      // ── 20. Log Out All Students with 80 active participants ──
+      // ── 20. Log Out All Students with 60 active participants ──
       const logoutStart = Date.now();
       const logout = await api(`/${MODE}/admin/logout-all-students`, { method: "POST", headers: adminHeaders, body: "{}" });
       metrics.logoutAllMs = Date.now() - logoutStart;
       expect(logout.status).toBe(200);
 
-      // ── 21+22. All 80 old sessions get SESSION_EXPIRED on their next request ──
+      // ── 21+22. All 60 old sessions get SESSION_EXPIRED on their next request ──
       const expired = await Promise.all(tokens.map((t) => sessionPoll(MODE, t)));
       for (const p of expired) {
         expect(p.status).toBe(401);

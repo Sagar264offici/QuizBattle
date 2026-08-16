@@ -1488,6 +1488,13 @@ type QuizStatus = "PREPARING" | "WAITING" | "COUNTDOWN" | "LIVE" | "LOCKED" | "R
 const COUNTDOWN_SECONDS = 5;
 
 /**
+ * Maximum number of students allowed to join the TEST portal (practice mode).
+ * The live event portal is unlimited — this cap applies to test mode only and
+ * is enforced at registration time (PORTAL_FULL).
+ */
+const TEST_MODE_MAX_MEMBERS = 60;
+
+/**
  * Per-question answer window (server-authoritative), scaled by difficulty:
  *   Q1–40    → 15s (easy warm-up rounds)
  *   Q41–80   → 30s (core rounds)
@@ -1851,6 +1858,16 @@ async function saveParticipant(p: any, mode: QuizMode = "live") {
   await redis.set(keys.participantKey(p.sessionToken), jsonStr, { ex: 86400 });
   await redisCommand(["HSET", keys.participantsMap, p.sessionToken, jsonStr]);
   await redisCommand(["SADD", keys.participantTokens, p.sessionToken]);
+}
+
+/**
+ * Number of currently registered participants in a mode. The participantTokens
+ * set is the canonical roster: it is SADDed on register, SREM'd on kick, and
+ * deleted on a fresh wipe, so SCARD is an accurate live count.
+ */
+async function countRegisteredParticipants(mode: QuizMode): Promise<number> {
+  const res = await redisCommand(["SCARD", quizKeys(mode).participantTokens]);
+  return typeof res === "number" ? res : 0;
 }
 
 async function getSubmission(pid: number, qid: number, mode: QuizMode = "live") {
@@ -2539,6 +2556,18 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
           code: "PORTAL_CLOSED",
           error: "The student portal is closed. The host hasn't opened registration yet — please wait for the host to open it.",
         });
+      }
+
+      // Test-portal member cap: the practice quiz admits at most
+      // TEST_MODE_MAX_MEMBERS students. The live event portal is unlimited.
+      if (mode === "test") {
+        const memberCount = await countRegisteredParticipants(mode);
+        if (memberCount >= TEST_MODE_MAX_MEMBERS) {
+          return res.status(403).json({
+            code: "PORTAL_FULL",
+            error: `The test portal is full (maximum ${TEST_MODE_MAX_MEMBERS} members). Please wait for the host to free a spot.`,
+          });
+        }
       }
 
       const nextId = await redis.incr(quizKeys(mode).nextId);

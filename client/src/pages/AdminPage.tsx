@@ -118,6 +118,9 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [actionLoading, setActionLoading] = useState(false);
   const [notification, setNotification] = useState("");
   const [portalOpen, setPortalOpen] = useState(false);
+  // Test-mode portal state — shown on the LIVE dashboard as a quick way to open
+  // the practice portal without leaving the page. Only touches /api/test/...
+  const [testPortalOpen, setTestPortalOpen] = useState(false);
 
   // Live Question Timer (dynamic per-question duration 15s / 30s / 45s)
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
@@ -127,6 +130,37 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(""), 4000);
+  };
+
+  // Read the TEST portal's open/closed state (scoped to /api/test/... so the
+  // live portal is never touched or read here).
+  const refreshTestPortal = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ session?: { portalOpen?: boolean } }>("/api/quiz-state", undefined, "test");
+      setTestPortalOpen((cur) => (cur === (data.session?.portalOpen === true) ? cur : data.session?.portalOpen === true));
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    if (mode === "live") refreshTestPortal();
+  }, [mode, refreshTestPortal]);
+
+  // Open/close ONLY the test portal — the live portal stays untouched.
+  const toggleTestPortal = async () => {
+    setActionLoading(true);
+    try {
+      await fetchJson(
+        testPortalOpen ? "/api/admin/close-portal" : "/api/admin/open-portal",
+        { method: "POST", body: JSON.stringify({}) },
+        "test",
+      );
+      await refreshTestPortal();
+      showNotification(testPortalOpen ? "🔒 Test portal closed." : "🧪 Test portal opened — students can now join /test!");
+    } catch (err: any) {
+      alert(err.message || "Action failed");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -448,7 +482,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           <div className="score-card">
             <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Students Joined</div>
             <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#38bdf8", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
-              {participantsCount}
+              {participantsCount}{mode === "test" ? " / 60" : ""}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "2px" }}>
               🔵 {stackParticipants.length} Stack | 🟢 {innovatorsParticipants.length} Innovators
@@ -502,6 +536,9 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 {portalOpen
                   ? "Students can log in and join the quiz now. Close it to stop late joiners (existing students keep playing)."
                   : "Students CANNOT log in right now. Press OPEN THE PORTAL when you are ready for them to join."}
+                {mode === "test" && (
+                  <span style={{ color: "#fcd34d" }}> Member limit: 60 students maximum.</span>
+                )}
               </div>
             </div>
             <button
@@ -520,6 +557,50 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             </button>
           </div>
         </div>
+
+        {/* Test Portal quick control — LIVE dashboard only. Opens ONLY the
+            practice/test portal (/test) for up to 60 members; the live portal
+            is never affected. */}
+        {mode === "live" && (
+          <div
+            className="glass-card"
+            style={{
+              marginBottom: "20px",
+              padding: "16px 18px",
+              border: testPortalOpen ? "1.5px solid #f59e0b" : "1.5px solid var(--border-subtle)",
+              boxShadow: testPortalOpen ? "0 0 20px rgba(245, 158, 11, 0.15)" : "none",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "1.1rem", fontWeight: 900 }}>🧪 Test Portal</span>
+                  <span
+                    className="badge"
+                    style={{
+                      background: testPortalOpen ? "rgba(245, 158, 11, 0.2)" : "rgba(100, 116, 139, 0.2)",
+                      border: `1px solid ${testPortalOpen ? "#f59e0b" : "#64748b"}`,
+                      color: testPortalOpen ? "#fcd34d" : "#94a3b8",
+                    }}
+                  >
+                    {testPortalOpen ? "🟢 OPEN (TEST)" : "🔴 CLOSED (TEST)"}
+                  </span>
+                </div>
+                <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "4px" }}>
+                  Opens ONLY the practice/test portal (up to 60 members) — the live portal is not affected.
+                </div>
+              </div>
+              <button
+                className={`btn ${testPortalOpen ? "btn-danger" : "btn-warning"} btn-lg`}
+                style={{ flex: "0 0 auto", fontWeight: 900 }}
+                onClick={toggleTestPortal}
+                disabled={actionLoading}
+              >
+                {testPortalOpen ? "🔒 Close Test Portal" : "🧪 Open Test Portal"}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="admin-layout-grid">
           {/* LEFT: Controls & Submissions */}
