@@ -1405,7 +1405,58 @@ button, input, select {
   animation: fadeIn 0.25s ease-out;
 }
 
-/* ⚠️ TEST MODE anti-AI alert (tab/app switch detected) */
+/* 🛡️ Anti-cheat name watermark — overlays the live question so any
+   screenshot/photo of the phone is traceable to the student. */
+.screen-watermark {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 90;
+  color: rgba(255, 255, 255, 0.16);
+  font-size: clamp(1.1rem, 4vw, 2rem);
+  font-weight: 900;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transform: rotate(-22deg);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* 🔒 Full-screen blank shown while the app is hidden during a live question.
+   Covers the viewport so screenshots of the app switcher or a backgrounded
+   tab show nothing — question text is never captured by AI screen readers. */
+.screen-hidden-blank {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #0f172a 0%, #020617 100%);
+  padding: 24px;
+}
+.screen-hidden-inner {
+  text-align: center;
+  color: #f8fafc;
+  max-width: 520px;
+}
+.screen-hidden-title {
+  font-size: clamp(1.1rem, 4vw, 1.6rem);
+  font-weight: 900;
+  letter-spacing: 1px;
+  margin: 12px 0 8px;
+  color: #fca5a5;
+}
+.screen-hidden-sub {
+  color: #94a3b8;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ⚠️ anti-AI alert (tab/app switch detected) */
 .security-alert {
   position: fixed;
   top: 14px;

@@ -1584,6 +1584,10 @@ function quizKeys(mode: QuizMode) {
     nextId: isTest ? "quiz:test:nextParticipantId" : "quiz:nextParticipantId",
     sessionGen: isTest ? "quiz:test:sessionGen" : "quiz:sessionGen",
     kickedTokens: isTest ? "quiz:test:kickedTokens" : "quiz:kickedTokens",
+    // Anti-cheat: set of normalized "name|club" strings for students currently
+    // in the roster. O(1) SISMEMBER/SADD on register — never scans the roster.
+    nameIndex: isTest ? "quiz:test:nameIndex" : "quiz:nameIndex",
+    nameKey: (name: string, club: string) => `${String(name || "").trim().toLowerCase().replace(/\s+/g, " ")}|${String(club || "").toUpperCase()}`,
     participantKey: (token: string) => (isTest ? `pt:${token}` : `p:${token}`),
     submission: (pid: number, qid: number) => (isTest ? `sub:test:${pid}:${qid}` : `sub:${pid}:${qid}`),
     clubScore: (club: string) => (isTest ? `score:test:${club}` : `score:${club}`),
@@ -1852,6 +1856,7 @@ async function kickParticipant(mode: QuizMode, token: string, p: any) {
   await redisCommand(["EXPIRE", keys.kickedTokens, 86400]);
   await redisCommand(["HDEL", keys.participantsMap, token]);
   await redisCommand(["SREM", keys.participantTokens, token]);
+  await redisCommand(["SREM", keys.nameIndex, keys.nameKey(p.name, p.club)]);
   await redisCommand(["DEL", keys.participantKey(token)]);
   const toDelete = getQuestionIds(mode).map((qid) => keys.submission(p.id, qid));
   await delKeys(toDelete);
@@ -1863,6 +1868,7 @@ async function saveParticipant(p: any, mode: QuizMode = "live") {
   await redis.set(keys.participantKey(p.sessionToken), jsonStr, { ex: 86400 });
   await redisCommand(["HSET", keys.participantsMap, p.sessionToken, jsonStr]);
   await redisCommand(["SADD", keys.participantTokens, p.sessionToken]);
+  await redisCommand(["SADD", keys.nameIndex, keys.nameKey(p.name, p.club)]);
 }
 
 /**
@@ -1870,10 +1876,6 @@ async function saveParticipant(p: any, mode: QuizMode = "live") {
  * set is the canonical roster: it is SADDed on register, SREM'd on kick, and
  * deleted on a fresh wipe, so SCARD is an accurate live count.
  */
-async function countRegisteredParticipants(mode: QuizMode): Promise<number> {
-  const res = await redisCommand(["SCARD", quizKeys(mode).participantTokens]);
-  return typeof res === "number" ? res : 0;
-}
 
 // ── Atomically save a submission AND record the fastest correct tap ──
 // Runs as a single atomic unit on Redis. Returns:
@@ -1943,6 +1945,7 @@ async function clearModeData(mode: QuizMode) {
   await delKeys(toDelete);
 
   await redisCommand(["DEL", keys.participantsMap, keys.participantTokens]);
+  await redisCommand(["DEL", keys.nameIndex]);
   await redis.set(keys.clubScore("STACK_PUSH"), "0");
   await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
   await redisCommand(["DEL", keys.state, keys.nextId, keys.sessionGen, keys.kickedTokens]);
@@ -1980,6 +1983,7 @@ async function logoutAllStudents(mode: QuizMode) {
   await delKeys(toDelete);
 
   await redisCommand(["DEL", keys.participantsMap, keys.participantTokens, keys.kickedTokens]);
+  await redisCommand(["DEL", keys.nameIndex]);
   await redis.set(keys.clubScore("STACK_PUSH"), "0");
   await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
   await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
@@ -2553,16 +2557,37 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         });
       }
 
+      // Anti-cheat + portal cap in ONE pipelined round trip (SCARD for the
+      // test-member cap, SISMEMBER for the duplicate-name guard). Keeping
+      // this to a single Redis request is what lets the 60-student cap test
+      // finish well inside its timeout.
+      const keys = quizKeys(mode);
+      const nameKey = keys.nameKey(n, String(club));
+      const checks = await redisPipeline([
+        ["SCARD", keys.participantTokens],
+        ["SISMEMBER", keys.nameIndex, nameKey],
+      ]);
+      if (checks === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+      const [memberCountRaw, nameTaken] = Array.isArray(checks) ? checks : [undefined, undefined];
+      const memberCount = typeof memberCountRaw === "number" ? memberCountRaw : 0;
+
       // Test-portal member cap: the practice quiz admits at most
       // TEST_MODE_MAX_MEMBERS students. The live event portal is unlimited.
-      if (mode === "test") {
-        const memberCount = await countRegisteredParticipants(mode);
-        if (memberCount >= TEST_MODE_MAX_MEMBERS) {
-          return res.status(403).json({
-            code: "PORTAL_FULL",
-            error: `The test portal is full (maximum ${TEST_MODE_MAX_MEMBERS} members). Please wait for the host to free a spot.`,
-          });
-        }
+      if (mode === "test" && memberCount >= TEST_MODE_MAX_MEMBERS) {
+        return res.status(403).json({
+          code: "PORTAL_FULL",
+          error: `The test portal is full (maximum ${TEST_MODE_MAX_MEMBERS} members). Please wait for the host to free a spot.`,
+        });
+      }
+
+      // Anti-cheat: a student cannot register twice under the same name AND
+      // club (a second phone silently joining as the same person). Kicked
+      // students are removed from the index, so they CAN rejoin.
+      if (nameTaken === 1) {
+        return res.status(409).json({
+          code: "NAME_TAKEN",
+          error: `A student named "${n}" is already registered in ${String(club).replace(/_/g, " ")}. If that is you on another device, ask the host to remove the duplicate first.`,
+        });
       }
 
       const nextId = await redis.incr(quizKeys(mode).nextId);

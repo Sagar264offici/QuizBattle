@@ -136,6 +136,9 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   // copy/paste lockdown while a test question is LIVE.
   const [securityViolations, setSecurityViolations] = useState(0);
   const [showSecurityAlert, setShowSecurityAlert] = useState(false);
+  // While true, the live question is BLANKED: a screenshot of the app switcher
+  // or a backgrounded tab shows nothing (anti-AI / anti-screen-read).
+  const [screenHidden, setScreenHidden] = useState(false);
   const [bonusToast, setBonusToast] = useState<number>(0);
 
   // Live Club Scores
@@ -372,13 +375,14 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     return () => clearInterval(interval);
   }, [sessionToken, participant, lastSyncedAt]);
 
-  // 🛡️ TEST MODE — ANTI-AI SECURE SCREEN
-  // While a test question is LIVE the screen is locked: fullscreen is forced,
+  // 🛡️ ANTI-AI SECURE SCREEN (live + test)
+  // While a question is LIVE the screen is locked: fullscreen is forced,
   // switching tabs/apps is detected and flagged, and copy/paste/context-menu /
   // text-selection are blocked. This is client-side deterrence — the server
-  // remains the sole authority on scoring and never trusts the client.
+  // remains the sole authority on scoring and never trusts the client. A
+  // name watermark overlays the question so any screenshot/photo is traceable.
   useEffect(() => {
-    if (mode !== "test" || !participant) return;
+    if (!participant) return;
 
     const flagViolation = () => {
       const isLiveQuestion = status === "LIVE" && !hasSubmitted;
@@ -389,9 +393,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     };
 
     const onVisibility = () => {
-      if (document.hidden) flagViolation();
+      if (document.hidden) {
+        setScreenHidden(true);
+        flagViolation();
+      } else {
+        setScreenHidden(false);
+      }
     };
-    const onBlur = () => flagViolation();
+    const onBlur = () => {
+      setScreenHidden(true);
+      flagViolation();
+    };
     const onCopy = (e: ClipboardEvent) => e.preventDefault();
     const onPaste = (e: ClipboardEvent) => e.preventDefault();
     const onCut = (e: ClipboardEvent) => e.preventDefault();
@@ -417,11 +429,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     };
   }, [mode, participant, status, hasSubmitted]);
 
-  // 🛡️ TEST MODE — force fullscreen the moment a test question goes LIVE so
-  // students cannot peek at other apps. Best-effort: some browsers require a
-  // user gesture, so this is a deterrent, not a guarantee.
+  // 🛡️ force fullscreen the moment a question goes LIVE so students cannot
+  // peek at other apps. Best-effort: some browsers require a user gesture, so
+  // this is a deterrent, not a guarantee.
   useEffect(() => {
-    if (mode !== "test" || status !== "LIVE" || !participant) return;
+    if (status !== "LIVE" || !participant) return;
     const el = document.documentElement as HTMLElement & {
       requestFullscreen?: () => Promise<void>;
       webkitRequestFullscreen?: () => Promise<void>;
@@ -851,7 +863,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
                     </p>
                     <p style={{ marginTop: "8px", fontWeight: 700, color: "#fbbf24" }}>
-                      🎯 The test battle has 60 questions in 3 rounds — R1: 15s · R2: 30s · R3: 45s.
+                      🎯 The test battle has 100 questions in 5 rounds — 15s / 30s / 45s.
                       Winners are decided by correct answers AND speed, with 🔥 bonus points for 3
                       fastest-in-a-row. Anti-AI secure mode is ON.
                     </p>
@@ -920,10 +932,10 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         </div>
       )}
 
-      {/* 🛡️ TEST MODE anti-AI alert — detected tab/app switch during a live question */}
-      {showSecurityAlert && mode === "test" && (
+      {/* 🛡️ anti-AI alert — detected tab/app switch during a live question */}
+      {showSecurityAlert && (
         <div className="security-alert">
-          ⚠️ LEAVING THE TEST SCREEN DETECTED ({securityViolations}) — AI/EXTERNAL HELP IS NOT ALLOWED!
+          ⚠️ LEAVING THE QUIZ SCREEN DETECTED ({securityViolations}) — AI/EXTERNAL HELP IS NOT ALLOWED!
         </div>
       )}
 
@@ -1030,10 +1042,28 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* ACTIVE QUESTION STATE (LIVE / LOCKED / REVEALED) */}
           {questionVisible ? (
             <div className="student-question-container" style={{ marginTop: "18px" }}>
-              {/* 🛡️ TEST MODE secure badge — shown while a test question is live */}
-              {mode === "test" && status === "LIVE" && (
+              {/* 🛡️ secure badge — shown while a question is live */}
+              {status === "LIVE" && (
                 <div className="secure-mode-badge">
-                  🛡️ SECURE TEST MODE — NO COPY · NO TAB-SWITCH · FULLSCREEN
+                  🛡️ SECURE MODE — NO COPY · NO TAB-SWITCH · FULLSCREEN · WATERMARKED
+                </div>
+              )}
+
+              {/* 🛡️ BLANKED while the app is hidden — screenshots of the app
+                  switcher / a backgrounded tab show nothing, so AI screen
+                  readers cannot harvest the question. Returns instantly when
+                  the student comes back. */}
+              {screenHidden && status === "LIVE" && !hasSubmitted && (
+                <div className="screen-hidden-blank">
+                  <div className="screen-hidden-inner">
+                    <div style={{ fontSize: "2.4rem" }}>🔒</div>
+                    <div className="screen-hidden-title">YOU LEFT THE QUIZ SCREEN</div>
+                    <div className="screen-hidden-sub">
+                      {participant ? `${participant.name} — ` : ""}staying on the quiz screen is mandatory.
+                      <br />
+                      The question was hidden. Return to this tab to continue.
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1081,9 +1111,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
               {/* Question Text Box */}
               <div className="question-text-box">
-                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 60 : 100}</div>
+                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 100 : 100}</div>
                 <div className="question-main-text">{question.questionText}</div>
               </div>
+
+              {/* 🛡️ Anti-cheat name watermark — makes any screenshot/photo
+                  of this phone traceable to the student (both modes). */}
+              {status === "LIVE" && !hasSubmitted && participant && (
+                <div className="screen-watermark" aria-hidden="true">
+                  {`${participant.name} · ${participant.club === "STACK_PUSH" ? "⚡ Stack.push" : "🚀 IT Innovators"}`}
+                </div>
+              )}
 
               {/* Multiple Choice Options (A, B, C, D) */}
               <div className="options-grid">
