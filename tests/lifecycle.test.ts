@@ -44,6 +44,14 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
       body: "{}",
     });
 
+  // Fresh events start with the portal CLOSED — open it so students can join.
+  const openPortal = (mode: string) =>
+    api(mode === "test" ? "/test/admin/open-portal" : "/admin/open-portal", {
+      method: "POST",
+      headers: adminHeaders,
+      body: "{}",
+    });
+
   beforeAll(async () => {
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -58,6 +66,8 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
   beforeEach(async () => {
     await reset("live");
     await reset("test");
+    await openPortal("live");
+    await openPortal("test");
   });
 
   // ── 1+2. Fresh event starts PREPARING and Q1 is unavailable ────────────────

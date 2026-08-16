@@ -32,6 +32,12 @@ describe("Express App API Routes", () => {
       headers: adminHeaders,
       body: "{}",
     });
+    // Fresh events start with the portal CLOSED — open it so students can join.
+    await fetch(`${baseUrl}/api/admin/open-portal`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: "{}",
+    });
   });
 
   it("GET /api/health returns ok", async () => {

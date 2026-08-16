@@ -107,6 +107,8 @@ describe("Production-readiness load rehearsal — 80 concurrent students (test m
 
     // Clean test-mode state so the rehearsal starts from a known baseline.
     await api(`/${MODE}/admin/reset-all-fresh`, { method: "POST", headers: adminHeaders, body: "{}" });
+    // Fresh events start with the portal CLOSED — open it so students can join.
+    await api(`/${MODE}/admin/open-portal`, { method: "POST", headers: adminHeaders, body: "{}" });
 
     // Baseline health / Redis ping.
     const health = await (await api("/health")).json();

@@ -30,6 +30,9 @@ describe("Test mode — 20-question isolated quiz + global student logout", () =
   beforeEach(async () => {
     await api("/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
     await api("/test/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
+    // Fresh events start with the portal CLOSED — open both so students can join.
+    await api("/admin/open-portal", { method: "POST", headers: adminHeaders, body: "{}" });
+    await api("/test/admin/open-portal", { method: "POST", headers: adminHeaders, body: "{}" });
   });
 
   // ── 1. Question set ─────────────────────────────────────────────────────────

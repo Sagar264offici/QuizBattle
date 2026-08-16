@@ -66,6 +66,7 @@ interface QuizSession {
   questionEndsAt: string | null;
   durationSeconds?: number;
   correctAnswer: string | null;
+  portalOpen?: boolean;
 }
 
 interface AdminSummary {
@@ -116,6 +117,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [roundFilter, setRoundFilter] = useState("all");
   const [actionLoading, setActionLoading] = useState(false);
   const [notification, setNotification] = useState("");
+  const [portalOpen, setPortalOpen] = useState(false);
 
   // Live Question Timer (dynamic per-question duration 15s / 30s / 45s)
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
@@ -168,6 +170,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
       }
       setQuestionEndsAt(sumData.session?.questionEndsAt || null);
       if (sumData.session?.durationSeconds) setDurationSeconds(sumData.session.durationSeconds);
+      setPortalOpen((cur) => (cur === (sumData.session?.portalOpen === true) ? cur : sumData.session?.portalOpen === true));
 
       // Only replace roster arrays when the actual contents changed — this
       // keeps the DOM stable across polls and stops the list from re-rendering
@@ -195,9 +198,13 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   useEffect(() => {
     if (!isAuthenticated) return;
     refreshData();
-    const interval = setInterval(refreshData, 1200);
+    // Poll faster while a question is actually running (live/countdown) so the
+    // host sees submissions and status changes with less delay; idle states
+    // can poll slower to keep Redis traffic down.
+    const pollMs = status === "LIVE" || status === "COUNTDOWN" ? 700 : 1200;
+    const interval = setInterval(refreshData, pollMs);
     return () => clearInterval(interval);
-  }, [isAuthenticated, refreshData]);
+  }, [isAuthenticated, refreshData, status]);
 
   // 30s Live Question Timer countdown
   useEffect(() => {
@@ -463,6 +470,54 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           <div className="score-card innovators">
             <div className="score-card-title">🚀 IT Innovators</div>
             <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>{innovScore}</div>
+          </div>
+        </div>
+
+        {/* Student Portal Gate — open so students can log in, close to stop late joiners */}
+        <div
+          className="glass-card"
+          style={{
+            marginBottom: "20px",
+            padding: "16px 18px",
+            border: portalOpen ? "1.5px solid #10b981" : "1.5px solid #f59e0b",
+            boxShadow: portalOpen ? "0 0 20px rgba(16, 185, 129, 0.15)" : "0 0 20px rgba(245, 158, 11, 0.12)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "1.1rem", fontWeight: 900 }}>🚪 Student Portal</span>
+                <span
+                  className="badge"
+                  style={{
+                    background: portalOpen ? "rgba(16, 185, 129, 0.2)" : "rgba(245, 158, 11, 0.2)",
+                    border: `1px solid ${portalOpen ? "#10b981" : "#f59e0b"}`,
+                    color: portalOpen ? "#4ade80" : "#fcd34d",
+                  }}
+                >
+                  {portalOpen ? "🟢 OPEN" : "🔴 CLOSED"}
+                </span>
+              </div>
+              <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "4px" }}>
+                {portalOpen
+                  ? "Students can log in and join the quiz now. Close it to stop late joiners (existing students keep playing)."
+                  : "Students CANNOT log in right now. Press OPEN THE PORTAL when you are ready for them to join."}
+              </div>
+            </div>
+            <button
+              className={`btn ${portalOpen ? "btn-danger" : "btn-success"} btn-lg`}
+              style={{ flex: "0 0 auto", fontWeight: 900 }}
+              onClick={() =>
+                runHostAction(
+                  portalOpen ? "/api/admin/close-portal" : "/api/admin/open-portal",
+                  {},
+                  portalOpen ? "🔒 Portal closed — new students can no longer join." : "🟢 Portal opened — students can now log in!",
+                )
+              }
+              disabled={actionLoading}
+            >
+              {portalOpen ? "🔒 Close the Portal" : "🟢 Open the Portal"}
+            </button>
           </div>
         </div>
 

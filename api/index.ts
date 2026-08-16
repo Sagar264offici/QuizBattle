@@ -1512,6 +1512,12 @@ interface QuizSessionState {
   questionEndsAt: string | null;
   durationSeconds: number;
   correctAnswer: string | null;
+  /**
+   * Student portal gate. While false, new students CANNOT register/join —
+   * they are told to wait until the host opens the portal. Students who are
+   * already registered keep playing; this only gates joining.
+   */
+  portalOpen: boolean;
   updatedAt: string;
 }
 
@@ -1523,6 +1529,7 @@ const DEFAULT_STATE: QuizSessionState = {
   questionEndsAt: null,
   durationSeconds: QUESTION_SECONDS,
   correctAnswer: null,
+  portalOpen: false,
   updatedAt: new Date().toISOString(),
 };
 
@@ -2244,6 +2251,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       countdownEndsAt: null,
       questionEndsAt: null,
       correctAnswer: null,
+      // A fresh event starts with the portal CLOSED — students cannot join
+      // until the host explicitly opens it.
+      portalOpen: false,
     });
     res.json({ ok: true, message: "All data cleared — fresh event is in PREPARING state", state });
   });
@@ -2256,6 +2266,20 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   router.post(`${prefix}/admin/logout-all-students`, requireAdmin, async (_req, res) => {
     const gen = await logoutAllStudents(mode);
     res.json({ ok: true, message: "All students logged out. Their sessions are now invalid.", sessionGeneration: gen });
+  });
+
+  // ── Student Portal Gate (registration on/off) ───────────────────────────────
+  // While the portal is closed, new students cannot register or join. The host
+  // opens it when ready (e.g. right before the event) and can close it again
+  // (e.g. after everyone is in) to stop late logins.
+  router.post(`${prefix}/admin/open-portal`, requireAdmin, async (_req, res) => {
+    const state = await setState(mode, { portalOpen: true });
+    res.json({ ok: true, portalOpen: true, state });
+  });
+
+  router.post(`${prefix}/admin/close-portal`, requireAdmin, async (_req, res) => {
+    const state = await setState(mode, { portalOpen: false });
+    res.json({ ok: true, portalOpen: false, state });
   });
 
   router.get(`${prefix}/admin/summary`, requireAdmin, async (_req, res) => {
@@ -2506,6 +2530,16 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const n = String(name || "").trim();
       if (!n) return res.status(400).json({ error: "Name is required" });
       if (!isValidClub(String(club || ""))) return res.status(400).json({ error: "Valid club required" });
+
+      // Portal gate: no new students may join until the host opens the portal.
+      // Already-registered students are unaffected — this only blocks joining.
+      const state = await getState(mode);
+      if (state.portalOpen !== true) {
+        return res.status(403).json({
+          code: "PORTAL_CLOSED",
+          error: "The student portal is closed. The host hasn't opened registration yet — please wait for the host to open it.",
+        });
+      }
 
       const nextId = await redis.incr(quizKeys(mode).nextId);
       const id = Number(nextId) || Date.now();

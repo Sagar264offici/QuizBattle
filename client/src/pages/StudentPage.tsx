@@ -98,6 +98,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState("");
 
+  // Student portal gate — the host must open the portal before anyone can join.
+  // Defaults to OPEN while we don't know yet, so the form never blocks on a
+  // failed status check; the server is authoritative and rejects if closed.
+  const [portalOpen, setPortalOpen] = useState(true);
+
   // Quiz state
   const [status, setStatus] = useState<string>("WAITING");
   const [question, setQuestion] = useState<Question | null>(null);
@@ -288,9 +293,14 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       syncLeaderboard();
     }
 
+    // Poll faster while a question is actually running (countdown/live) so
+    // status changes arrive sooner on mobile; idle states poll slower to keep
+    // Redis traffic low. The countdown/GO reveal itself is client-timed, so
+    // the question still appears at the exact same moment on every device.
+    const pollMs = status === "LIVE" || status === "COUNTDOWN" ? 700 : 1200;
     const interval = setInterval(() => {
       if (sessionToken) syncSession(sessionToken);
-    }, 1200);
+    }, pollMs);
 
     socket.on("quiz:state", () => {
       if (sessionToken) syncSession(sessionToken);
@@ -301,7 +311,28 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       clearInterval(interval);
       socket.off("quiz:state");
     };
-  }, [sessionToken]);
+  }, [sessionToken, status]);
+
+  // While the join form is shown, watch the portal status so students see
+  // "portal closed — wait for the host" instead of guessing.
+  useEffect(() => {
+    if (participant) return;
+    let cancelled = false;
+    const checkPortal = async () => {
+      try {
+        const data = await fetchJson<{ session?: { portalOpen?: boolean } }>("/api/quiz-state", undefined, mode);
+        if (!cancelled && data.session) {
+          setPortalOpen((cur) => (cur === (data.session!.portalOpen !== false) ? cur : data.session!.portalOpen !== false));
+        }
+      } catch (_) {}
+    };
+    checkPortal();
+    const interval = setInterval(checkPortal, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [participant, mode]);
 
   // Connection-stale indicator: if the server hasn't confirmed state within the
   // last few poll cycles, surface it clearly instead of showing stale quiz data.
@@ -412,12 +443,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     }
   };
 
-  // Handle answer submission
+  // Handle answer submission. The lock-in is OPTIMISTIC: the student's tap
+  // gives instant "✓ Locked in" feedback (critical on slow mobile networks)
+  // while the POST runs in the background. If the server rejects it, we
+  // revert and show the real error.
   const handleSubmitAnswer = async () => {
     if (!selectedAnswer || !question || !sessionToken || hasSubmitted || submitting || status !== "LIVE") return;
 
     setSubmitting(true);
     setErrorMessage("");
+    setHasSubmitted(true);
+    saveCachedAnswer({ questionId: question.id, answer: selectedAnswer, submitted: true });
 
     try {
       const res = await fetchJson<{
@@ -433,8 +469,6 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         }),
       }, mode);
 
-      setHasSubmitted(true);
-      saveCachedAnswer({ questionId: question.id, answer: selectedAnswer, submitted: true });
       sessionRequestRef.current += 1;
       if (participant && res.participantScore !== undefined) {
         setParticipant({ ...participant, score: res.participantScore });
@@ -442,6 +476,9 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       syncLeaderboard();
       syncSession(sessionToken, true);
     } catch (err: any) {
+      // Revert the optimistic lock-in — the server never accepted it.
+      setHasSubmitted(false);
+      saveCachedAnswer(null);
       if (isSessionExpired(err)) {
         handleSessionEnded(
           mode === "test" ? "Your test session was ended by the host." : "Your session was ended by the host.",
@@ -519,6 +556,27 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "0.95rem", letterSpacing: "0.5px" }}>
                   🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
                 </span>
+              </div>
+            )}
+
+            {!portalOpen && (
+              <div
+                style={{
+                  background: "rgba(245, 158, 11, 0.12)",
+                  border: "1.5px solid #f59e0b",
+                  borderRadius: "12px",
+                  padding: "14px 16px",
+                  marginBottom: "16px",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "0.5px" }}>
+                  🔴 THE PORTAL IS CLOSED
+                </div>
+                <div style={{ color: "#fde68a", fontSize: "0.85rem", marginTop: "4px" }}>
+                  The host hasn't opened registration yet. Please wait — as soon as they open the portal,
+                  you'll be able to join right here.
+                </div>
               </div>
             )}
 
@@ -624,10 +682,16 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
               <button
                 type="submit"
                 className="btn btn-primary btn-block btn-lg"
-                disabled={regLoading || !regName.trim() || !regClub}
+                disabled={regLoading || !regName.trim() || !regClub || !portalOpen}
                 style={{ fontSize: "1.05rem", padding: "14px" }}
               >
-                {regLoading ? "Entering Battle Arena..." : mode === "test" ? "ENTER TEST QUIZ →" : "ENTER LIVE QUIZ →"}
+                {regLoading
+                  ? "Entering Battle Arena..."
+                  : !portalOpen
+                    ? "⏳ WAITING FOR HOST TO OPEN PORTAL..."
+                    : mode === "test"
+                      ? "ENTER TEST QUIZ →"
+                      : "ENTER LIVE QUIZ →"}
               </button>
 
               {/* TEST QUIZ access — visible but deliberately gated behind a warning */}

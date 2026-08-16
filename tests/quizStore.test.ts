@@ -31,6 +31,8 @@ describe("Redis-backed quiz API behavior", () => {
 
   beforeEach(async () => {
     await request("/admin/reset-all-fresh", { method: "POST", headers: adminHeaders, body: "{}" });
+    // Fresh events start with the portal CLOSED — open it so students can join.
+    await request("/admin/open-portal", { method: "POST", headers: adminHeaders, body: "{}" });
   });
 
   it("keeps first submissions private and scores them on reveal", async () => {
