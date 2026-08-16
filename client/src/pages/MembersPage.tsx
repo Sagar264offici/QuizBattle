@@ -11,6 +11,9 @@ export interface Member {
   correctCount: number;
   wrongCount: number;
   attemptCount: number;
+  correctResponseMs?: number;
+  fastestStreak?: number;
+  bonusPoints?: number;
   submitted: boolean;
   sessionToken?: string;
 }
@@ -283,6 +286,7 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <th>Reg. Time</th>
                 <th>Status</th>
                 <th>Score</th>
+                <th>Bonus 🔥</th>
                 <th>Correct</th>
                 <th>Wrong</th>
                 <th>Submissions</th>
@@ -292,7 +296,7 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
             <tbody>
               {visibleMembers.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: "center", padding: "28px", color: "var(--text-muted)" }}>
+                  <td colSpan={11} style={{ textAlign: "center", padding: "28px", color: "var(--text-muted)" }}>
                     {loading ? "Loading members…" : members.length === 0 ? "No participants have joined yet." : "No members match your filters."}
                   </td>
                 </tr>
@@ -313,6 +317,15 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
                       )}
                     </td>
                     <td style={{ fontWeight: 900, color: "#fbbf24", fontFamily: "var(--font-mono)" }}>{m.score}</td>
+                    <td style={{ fontFamily: "var(--font-mono)" }}>
+                      {(m.bonusPoints || 0) > 0 || (m.fastestStreak || 0) >= 3 ? (
+                        <span style={{ color: "#fb923c", fontWeight: 800 }} title={`${m.fastestStreak || 0}-fastest streak`}>
+                          🔥 {m.bonusPoints || 0} pts
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--text-dim)" }}>—</span>
+                      )}
+                    </td>
                     <td style={{ color: "#4ade80", fontFamily: "var(--font-mono)" }}>{m.correctCount}</td>
                     <td style={{ color: "#f87171", fontFamily: "var(--font-mono)" }}>{m.wrongCount}</td>
                     <td style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{m.attemptCount}</td>
@@ -347,6 +360,7 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
                 </div>
                 <div className="member-card-stats">
                   <span>Score <strong style={{ color: "#fbbf24" }}>{m.score}</strong></span>
+                  {(m.bonusPoints || 0) > 0 && <span>🔥 Bonus <strong style={{ color: "#fb923c" }}>{m.bonusPoints}</strong></span>}
                   <span>✓ <strong style={{ color: "#4ade80" }}>{m.correctCount}</strong></span>
                   <span>✕ <strong style={{ color: "#f87171" }}>{m.wrongCount}</strong></span>
                   <span>Subs <strong>{m.attemptCount}</strong></span>

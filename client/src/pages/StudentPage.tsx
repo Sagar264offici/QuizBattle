@@ -10,6 +10,9 @@ interface Participant {
   club: "STACK_PUSH" | "IT_INNOVATORS";
   score: number;
   sessionToken: string;
+  bonusPoints?: number;
+  fastestStreak?: number;
+  correctResponseMs?: number;
 }
 
 interface Question {
@@ -128,6 +131,12 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   // TEST QUIZ warning modal (bilingual, shown BEFORE entering test mode)
   const [showTestWarning, setShowTestWarning] = useState(false);
+
+  // 🛡️ TEST QUIZ anti-AI secure screen — fullscreen + tab-switch detection +
+  // copy/paste lockdown while a test question is LIVE.
+  const [securityViolations, setSecurityViolations] = useState(0);
+  const [showSecurityAlert, setShowSecurityAlert] = useState(false);
+  const [bonusToast, setBonusToast] = useState<number>(0);
 
   // Live Club Scores
   const [clubScores, setClubScores] = useState({
@@ -349,6 +358,66 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     return () => clearInterval(interval);
   }, [sessionToken, participant, lastSyncedAt]);
 
+  // 🛡️ TEST MODE — ANTI-AI SECURE SCREEN
+  // While a test question is LIVE the screen is locked: fullscreen is forced,
+  // switching tabs/apps is detected and flagged, and copy/paste/context-menu /
+  // text-selection are blocked. This is client-side deterrence — the server
+  // remains the sole authority on scoring and never trusts the client.
+  useEffect(() => {
+    if (mode !== "test" || !participant) return;
+
+    const flagViolation = () => {
+      const isLiveQuestion = status === "LIVE" && !hasSubmitted;
+      if (!isLiveQuestion) return;
+      setSecurityViolations((v) => v + 1);
+      setShowSecurityAlert(true);
+      window.setTimeout(() => setShowSecurityAlert(false), 4000);
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) flagViolation();
+    };
+    const onBlur = () => flagViolation();
+    const onCopy = (e: ClipboardEvent) => e.preventDefault();
+    const onPaste = (e: ClipboardEvent) => e.preventDefault();
+    const onCut = (e: ClipboardEvent) => e.preventDefault();
+    const onContextMenu = (e: MouseEvent) => e.preventDefault();
+    const onSelectStart = (e: Event) => e.preventDefault();
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("copy", onCopy, true);
+    document.addEventListener("cut", onCut, true);
+    document.addEventListener("paste", onPaste, true);
+    document.addEventListener("contextmenu", onContextMenu);
+    document.addEventListener("selectstart", onSelectStart);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("copy", onCopy, true);
+      document.removeEventListener("cut", onCut, true);
+      document.removeEventListener("paste", onPaste, true);
+      document.removeEventListener("contextmenu", onContextMenu);
+      document.removeEventListener("selectstart", onSelectStart);
+    };
+  }, [mode, participant, status, hasSubmitted]);
+
+  // 🛡️ TEST MODE — force fullscreen the moment a test question goes LIVE so
+  // students cannot peek at other apps. Best-effort: some browsers require a
+  // user gesture, so this is a deterrent, not a guarantee.
+  useEffect(() => {
+    if (mode !== "test" || status !== "LIVE" || !participant) return;
+    const el = document.documentElement as HTMLElement & {
+      requestFullscreen?: () => Promise<void>;
+      webkitRequestFullscreen?: () => Promise<void>;
+    };
+    if (!document.fullscreenElement) {
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      req?.call(el).catch(() => {});
+    }
+  }, [mode, status, participant]);
+
   // 5-Second Question Appearing Countdown (5 → 4 → 3 → 2 → 1 → GO!)
   // The server's countdownEndsAt is the single source of truth for when the
   // question actually starts; this tick is purely cosmetic.
@@ -460,6 +529,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         ok: boolean;
         submission: any;
         participantScore?: number;
+        bonusAwarded?: number;
+        fastestStreak?: number;
       }>("/api/questions/submit", {
         method: "POST",
         body: JSON.stringify({
@@ -471,7 +542,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
       sessionRequestRef.current += 1;
       if (participant && res.participantScore !== undefined) {
-        setParticipant({ ...participant, score: res.participantScore });
+        setParticipant({
+          ...participant,
+          score: res.participantScore,
+          bonusPoints: participant.bonusPoints ?? 0,
+          fastestStreak: res.fastestStreak ?? participant.fastestStreak ?? 0,
+        });
+      }
+      // 🔥 FASTEST-STREAK BONUS toast — 3 correct + fastest answers in a row!
+      if (res.bonusAwarded && res.bonusAwarded > 0) {
+        setBonusToast(res.bonusAwarded);
+        window.setTimeout(() => setBonusToast(0), 4000);
       }
       syncLeaderboard();
       syncSession(sessionToken, true);
@@ -554,7 +635,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 }}
               >
                 <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "0.95rem", letterSpacing: "0.5px" }}>
-                  🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
+                  🧪 TEST MODE — 60 QUESTIONS · 3 ROUNDS — NOT THE LIVE COLLEGE QUIZ
                 </span>
               </div>
             )}
@@ -629,11 +710,19 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 </div>
               </div>
 
-              <h1 className="brand-title" style={{ fontSize: "1.75rem", margin: "6px 0 2px" }}>
+              <div className="glossy-badge" style={{ display: "inline-block", marginBottom: "8px" }}>
+                ⚡ TECHNICAL BATTLE ⚡
+              </div>
+              <h1 className="brand-title battle-title" style={{ fontSize: "1.9rem", margin: "6px 0 4px" }}>
                 {mode === "test" ? "IT Club Championship — TEST MODE" : "IT Club Championship"}
               </h1>
-              <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-                Stack.push ⚡ vs IT Innovators 🚀 — Live Tech Battle
+              <div className="vs-divider">
+                <span className="vs-side vs-stack">⚡ Stack.push</span>
+                <span className="vs-badge">VS</span>
+                <span className="vs-side vs-innovators">🚀 IT Innovators</span>
+              </div>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "6px" }}>
+                {mode === "test" ? "60-Question Tech Battle — 3 Rounds · Speed + Accuracy = Victory" : "Live Tech Battle — Speed + Accuracy = Victory"}
               </p>
             </div>
 
@@ -747,6 +836,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                     <p style={{ marginTop: "8px" }}>
                       DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
                     </p>
+                    <p style={{ marginTop: "8px", fontWeight: 700, color: "#fbbf24" }}>
+                      🎯 The test battle has 60 questions in 3 rounds — R1: 15s · R2: 30s · R3: 45s.
+                      Winners are decided by correct answers AND speed, with 🔥 bonus points for 3
+                      fastest-in-a-row. Anti-AI secure mode is ON.
+                    </p>
                     <hr style={{ border: "none", borderTop: "1px solid var(--border-subtle)", margin: "14px 0" }} />
                     <p>यह केवल कनेक्शन जाँचने और QuizBattle सिस्टम का परीक्षण करने के लिए है।</p>
                     <p style={{ marginTop: "8px" }}>जब तक होस्ट/ऑर्गनाइज़र आपको न कहे, इसे न खोलें।</p>
@@ -805,6 +899,20 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         </div>
       )}
 
+      {/* 🔥 FASTEST-STREAK BONUS toast — 3 correct + fastest answers in a row */}
+      {bonusToast > 0 && (
+        <div className="bonus-toast">
+          🔥 BONUS +{bonusToast} PTS — 3 FASTEST CORRECT IN A ROW!
+        </div>
+      )}
+
+      {/* 🛡️ TEST MODE anti-AI alert — detected tab/app switch during a live question */}
+      {showSecurityAlert && mode === "test" && (
+        <div className="security-alert">
+          ⚠️ LEAVING THE TEST SCREEN DETECTED ({securityViolations}) — AI/EXTERNAL HELP IS NOT ALLOWED!
+        </div>
+      )}
+
       <div className="container" style={{ maxWidth: 860, margin: "0 auto" }}>
         {mode === "test" && (
           <div
@@ -818,7 +926,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
+              🧪 TEST MODE — 60 QUESTIONS · 3 ROUNDS — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -853,6 +961,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <div style={{ fontSize: "1.5rem", fontWeight: 900, color: "#fbbf24", fontFamily: "var(--font-mono)", lineHeight: 1 }}>
                   {participant.score} pts
                 </div>
+                {(participant.bonusPoints || 0) > 0 && (
+                  <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#fb923c", marginTop: "2px" }}>
+                    🔥 +{participant.bonusPoints} bonus{(participant.fastestStreak || 0) >= 3 ? ` · ${participant.fastestStreak}-streak` : ""}
+                  </div>
+                )}
               </div>
               <button
                 onClick={handleLogout}
@@ -903,6 +1016,13 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* ACTIVE QUESTION STATE (LIVE / LOCKED / REVEALED) */}
           {questionVisible ? (
             <div className="student-question-container" style={{ marginTop: "18px" }}>
+              {/* 🛡️ TEST MODE secure badge — shown while a test question is live */}
+              {mode === "test" && status === "LIVE" && (
+                <div className="secure-mode-badge">
+                  🛡️ SECURE TEST MODE — NO COPY · NO TAB-SWITCH · FULLSCREEN
+                </div>
+              )}
+
               {/* 30-Second Live Question Timer Bar */}
               {status === "LIVE" && questionRemaining !== null && (
                 <div
@@ -947,7 +1067,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
               {/* Question Text Box */}
               <div className="question-text-box">
-                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 20 : 100}</div>
+                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 60 : 100}</div>
                 <div className="question-main-text">{question.questionText}</div>
               </div>
 
@@ -983,15 +1103,15 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
               </div>
 
               {/* Action / Feedback */}
-              <div style={{ marginTop: "16px" }}>
+              <div className="submit-bar" style={{ marginTop: "16px" }}>
                 {status === "LIVE" && !hasSubmitted && (
                   <button
                     className="btn btn-success btn-block btn-lg"
                     onClick={handleSubmitAnswer}
                     disabled={!selectedAnswer || submitting}
-                    style={{ padding: "14px", fontSize: "1.05rem" }}
+                    style={{ padding: "16px", fontSize: "1.1rem" }}
                   >
-                    {submitting ? "Submitting..." : selectedAnswer ? `LOCK IN OPTION ${selectedAnswer} →` : "Select an Option Above to Submit"}
+                    {submitting ? "Submitting..." : selectedAnswer ? `⚔️ LOCK IN OPTION ${selectedAnswer} →` : "Select an Option Above to Submit"}
                   </button>
                 )}
 

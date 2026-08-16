@@ -1495,21 +1495,43 @@ const COUNTDOWN_SECONDS = 5;
 const TEST_MODE_MAX_MEMBERS = 60;
 
 /**
- * Per-question answer window (server-authoritative), scaled by difficulty:
+ * Bonus points awarded whenever a participant answers 3 questions correctly
+ * AND fastest in a row (contiguous fastest-correct streak). Awarded again at
+ * every multiple of 3 (6, 9, ...) while the streak is unbroken.
+ */
+const FASTEST_STREAK_BONUS = 5;
+
+/**
+ * Per-question answer window (server-authoritative), scaled by difficulty and
+ * quiz mode:
+ *
+ * LIVE quiz (100 questions):
  *   Q1–40    → 15s (easy warm-up rounds)
  *   Q41–80   → 30s (core rounds)
  *   Q81–100  → 45s (hackathon challenge finale)
+ *
+ * TEST quiz (60 questions):
+ *   Q1–20    → 15s (ROUND 1 — EASY BASICS)
+ *   Q21–40   → 30s (ROUND 2 — MID-LEVEL IT)
+ *   Q41–60   → 45s (ROUND 3 — LOGIC BUILDING)
+ *
  * Unknown/future question numbers fall back to the default 30s.
  */
-function questionDurationSeconds(questionNumber: number | null | undefined): number {
+function questionDurationSeconds(questionNumber: number | null | undefined, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
+  if (mode === "test") {
+    if (n >= 1 && n <= 20) return 15;
+    if (n >= 21 && n <= 40) return 30;
+    if (n >= 41) return 45;
+    return 30;
+  }
   if (n >= 1 && n <= 40) return 15;
   if (n >= 81) return 45;
   if (n >= 41 && n <= 80) return 30;
   return 30;
 }
 
-const QUESTION_SECONDS = questionDurationSeconds(1);
+const QUESTION_SECONDS = questionDurationSeconds(1, "live");
 
 interface QuizSessionState {
   status: QuizStatus;
@@ -1663,7 +1685,7 @@ class RedisUnavailableError extends Error {
  * COUNTDOWN (5s) -> LIVE (30s) once countdownEndsAt passes, and LIVE -> LOCKED
  * once questionEndsAt passes. Mutates and returns the given state.
  */
-function applyAutoTransitions(state: QuizSessionState): QuizSessionState {
+function applyAutoTransitions(state: QuizSessionState, mode: QuizMode = "live"): QuizSessionState {
   // 1. Auto-transition COUNTDOWN (5s) -> LIVE (15/30/45s). The server is the
   // sole authority on when the question actually starts — the student's device
   // clock is never used to gate submissions.
@@ -1672,7 +1694,7 @@ function applyAutoTransitions(state: QuizSessionState): QuizSessionState {
       state.status = "LIVE";
       state.questionStartedAt = new Date().toISOString();
       state.countdownEndsAt = null;
-      const dur = questionDurationSeconds(state.currentQuestionId);
+      const dur = questionDurationSeconds(state.currentQuestionId, mode);
       state.questionEndsAt = new Date(Date.now() + dur * 1000).toISOString();
       state.durationSeconds = dur;
       state.updatedAt = new Date().toISOString();
@@ -1706,7 +1728,7 @@ async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
   const parsed = parseState(raw);
   if (!parsed) return { ...DEFAULT_STATE };
   const before = JSON.stringify(parsed);
-  const next = applyAutoTransitions(parsed);
+  const next = applyAutoTransitions(parsed, mode);
   // Only persist when a transition actually happened.
   if (JSON.stringify(next) !== before) {
     await redis.set(quizKeys(mode).state, JSON.stringify(next));
@@ -1810,6 +1832,9 @@ async function getParticipant(token: string, mode: QuizMode = "live") {
       correctCount: 0,
       wrongCount: 0,
       attemptCount: 0,
+      correctResponseMs: 0,
+      fastestStreak: 0,
+      bonusPoints: 0,
       joinedAt: new Date().toISOString(),
     };
     await saveParticipant(p, mode);
@@ -2101,7 +2126,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     if (!q) return res.status(400).json({ error: "Question not found" });
     const now = Date.now();
     const endsAt = new Date(now + COUNTDOWN_SECONDS * 1000).toISOString();
-    const dur = questionDurationSeconds(q.questionNumber);
+    const dur = questionDurationSeconds(q.questionNumber, mode);
     const qEndsAt = new Date(now + (COUNTDOWN_SECONDS + dur) * 1000).toISOString();
     const state = await setState(mode, {
       status: "COUNTDOWN",
@@ -2124,7 +2149,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     const q = getQuestion(Number(questionNumber) || cur.currentQuestionId || 1, mode);
     if (!q) return res.status(400).json({ error: "Question not found" });
     const now = Date.now();
-    const dur = questionDurationSeconds(q.questionNumber);
+    const dur = questionDurationSeconds(q.questionNumber, mode);
     const state = await setState(mode, {
       status: "LIVE",
       currentQuestionId: q.questionNumber,
@@ -2232,6 +2257,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         p.correctCount = 0;
         p.wrongCount = 0;
         p.attemptCount = 0;
+        p.correctResponseMs = 0;
+        p.fastestStreak = 0;
+        p.bonusPoints = 0;
         await redis.set(keys.participantKey(p.sessionToken), JSON.stringify(p), { ex: 86400 });
         for (const qid of getQuestionIds(mode)) {
           await redisCommand(["DEL", keys.submission(p.id, qid)]);
@@ -2317,7 +2345,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state = { ...DEFAULT_STATE };
     } else {
       const before = JSON.stringify(parsedState);
-      state = applyAutoTransitions(parsedState);
+      state = applyAutoTransitions(parsedState, mode);
       if (JSON.stringify(state) !== before) {
         await redis.set(keys.state, JSON.stringify(state));
       }
@@ -2399,12 +2427,14 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   });
 
   // Deterministic participant ordering shared by every leaderboard: score DESC,
-  // correct answers DESC, registration time ASC, participant id ASC. Stable
-  // tie-breakers mean equal-score students never shuffle between polls.
+  // correct answers DESC, total correct-answer time ASC (faster wins ties),
+  // registration time ASC, participant id ASC. Stable tie-breakers mean
+  // equal-score students never shuffle between polls.
   function compareParticipants(a: any, b: any): number {
     return (
       (b.score || 0) - (a.score || 0) ||
       (b.correctCount || 0) - (a.correctCount || 0) ||
+      (Number(a.correctResponseMs) || 0) - (Number(b.correctResponseMs) || 0) ||
       String(a.joinedAt || "").localeCompare(String(b.joinedAt || "")) ||
       (Number(a.id) || 0) - (Number(b.id) || 0)
     );
@@ -2443,6 +2473,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
           correctCount: p.correctCount || 0,
           wrongCount: p.wrongCount || 0,
           attemptCount: p.attemptCount || 0,
+          correctResponseMs: p.correctResponseMs || 0,
+          fastestStreak: p.fastestStreak || 0,
+          bonusPoints: p.bonusPoints || 0,
           submitted,
           // Admin-only endpoint — token needed for the individual kick action.
           sessionToken: String(p.sessionToken || ""),
@@ -2504,6 +2537,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       club: String(p.club || ""),
       score: p.score || 0,
       correctCount: p.correctCount || 0,
+      correctResponseMs: p.correctResponseMs || 0,
+      fastestStreak: p.fastestStreak || 0,
+      bonusPoints: p.bonusPoints || 0,
       joinedAt: p.joinedAt ?? null,
     }));
     const topStudents = students.slice(0, 3).map((p, idx) => ({ ...p, rank: idx + 1 }));
@@ -2514,7 +2550,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state = { ...DEFAULT_STATE };
     } else {
       const before = JSON.stringify(parsed);
-      state = applyAutoTransitions(parsed);
+      state = applyAutoTransitions(parsed, mode);
       if (JSON.stringify(state) !== before) {
         await redis.set(keys.state, JSON.stringify(state));
       }
@@ -2575,7 +2611,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const gen = await getSessionGen(mode);
 
       const token = encodeToken({ id, name: n, club: String(club), gen });
-      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, joinedAt: new Date().toISOString() };
+      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, fastestStreak: 0, bonusPoints: 0, joinedAt: new Date().toISOString() };
       await saveParticipant(participant, mode);
       res.json({ ok: true, participant });
     } catch (err: any) {
@@ -2647,6 +2683,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
           correctCount: 0,
           wrongCount: 0,
           attemptCount: 0,
+          correctResponseMs: 0,
+          fastestStreak: 0,
+          bonusPoints: 0,
           joinedAt: new Date().toISOString(),
         };
         await saveParticipant(participant, mode);
@@ -2673,7 +2712,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state = { ...DEFAULT_STATE };
     } else {
       const before = JSON.stringify(parsed);
-      state = applyAutoTransitions(parsed);
+      state = applyAutoTransitions(parsed, mode);
       if (JSON.stringify(state) !== before) {
         await redis.set(keys.state, JSON.stringify(state));
       }
@@ -2692,7 +2731,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state.status === "COUNTDOWN";
 
     res.json({
-      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, sessionToken: participant.sessionToken },
+      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, correctResponseMs: participant.correctResponseMs || 0, fastestStreak: participant.fastestStreak || 0, bonusPoints: participant.bonusPoints || 0, sessionToken: participant.sessionToken },
       hasSubmitted: !!submission,
       userSubmission: sanitizeSubmission(submission),
       currentQuestion: showQuestion && currentQ ? sanitizeQuestion(currentQ) : null,
@@ -2727,8 +2766,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const now = Date.now();
       const startedAt = state.questionStartedAt ? new Date(state.questionStartedAt).getTime() : now;
       const { isCorrect, pointsAwarded } = evaluateSubmission(a, currentQ.correctAnswer, currentQ.points);
+      const responseTimeMs = Math.max(0, now - startedAt);
 
-      const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs: Math.max(0, now - startedAt), submittedAt: new Date(now).toISOString() };
+      const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs, submittedAt: new Date(now).toISOString() };
       const saved = await saveSubmissionIfAbsent(sub, mode);
       if (!saved) return res.status(400).json({ error: "Already submitted" });
 
@@ -2736,23 +2776,49 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
       participant.wrongCount = (participant.wrongCount || 0) + (isCorrect ? 0 : 1);
       participant.attemptCount = (participant.attemptCount || 0) + 1;
-      await saveParticipant(participant, mode);
-      await addClubScore(participant.club, pointsAwarded, mode);
+      // Winner ranking uses both correctness AND speed: accumulate the total
+      // response time on CORRECT answers so equal scorers are ranked by who
+      // answered correctly fastest (see compareParticipants).
+      if (isCorrect) {
+        participant.correctResponseMs = (participant.correctResponseMs || 0) + responseTimeMs;
+      }
 
-      // Track fastest correct tap for question (atomic — race-free)
+      let bonusAwarded = 0;
+      // 🔥 FASTEST-STREAK BONUS: every 3 questions answered correctly AND
+      // fastest in a row (contiguous) awards FASTEST_STREAK_BONUS extra points.
+      // The streak resets on any wrong answer or when someone else was faster.
       if (isCorrect) {
         const fastestObj = {
+          participantId: participant.id,
           participantName: participant.name,
           club: participant.club,
-          responseTimeMs: sub.responseTimeMs,
-          responseTimeSec: (sub.responseTimeMs / 1000).toFixed(2),
+          responseTimeMs,
+          responseTimeSec: (responseTimeMs / 1000).toFixed(2),
           questionNumber: currentQ.questionNumber,
           answer: a,
         };
-        await recordFastestIfFaster(mode, currentQ.id, fastestObj);
+        const isFastest = await recordFastestIfFaster(mode, currentQ.id, fastestObj);
+        participant.fastestStreak = isFastest ? (participant.fastestStreak || 0) + 1 : 0;
+        if ((participant.fastestStreak || 0) > 0 && (participant.fastestStreak || 0) % 3 === 0) {
+          bonusAwarded = FASTEST_STREAK_BONUS;
+          participant.bonusPoints = (participant.bonusPoints || 0) + bonusAwarded;
+          participant.score = (participant.score || 0) + bonusAwarded;
+          await addClubScore(participant.club, bonusAwarded, mode);
+        }
+      } else {
+        participant.fastestStreak = 0;
       }
 
-      res.json({ ok: true, submission: sanitizeSubmission(sub), participantScore: participant.score });
+      await saveParticipant(participant, mode);
+      await addClubScore(participant.club, pointsAwarded, mode);
+
+      res.json({
+        ok: true,
+        submission: sanitizeSubmission(sub),
+        participantScore: participant.score,
+        bonusAwarded,
+        fastestStreak: participant.fastestStreak || 0,
+      });
     } catch (err: any) {
       res.status(400).json({ error: err.message || "Submission failed" });
     }

@@ -290,7 +290,9 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
   // ── 14+15. Leaderboard ordering is deterministic and stable ────────────────
   it("leaderboard ordering is deterministic and equal-score users never shift", async () => {
     // All three get identical scores/correct counts; ordering must fall back to
-    // joinedAt ASC then id ASC — i.e. registration order — and stay stable.
+    // total correct-answer time ASC (speed breaks ties — the winner is the one
+    // who gets the same answers right in less time), then joinedAt ASC, id ASC
+    // — and stay byte-for-byte stable between polls.
     const names = ["Same Score 1", "Same Score 2", "Same Score 3"];
     for (const n of names) await register("live", n, "STACK_PUSH");
 
@@ -313,12 +315,18 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
     // 15. Equal-score users must not shift between polls — the order must be
     // byte-for-byte identical across two consecutive reads.
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));
-    // 14. Ordering is deterministic: score DESC, correct DESC, joinedAt ASC,
-    // id ASC. With equal scores, the order must equal a stable sort by
-    // (joinedAt, id) — never random map/hash order.
+    // 14. Ordering is deterministic: score DESC, correct DESC, total
+    // correct-answer time ASC (faster wins ties), joinedAt ASC, id ASC. With
+    // equal scores, the order must equal a stable sort by (correctResponseMs,
+    // joinedAt, id) — never random map/hash order.
     const scorers = first.filter((s: any) => s.score > 0);
     const stableOrder = [...scorers]
-      .sort((a: any, b: any) => String(a.joinedAt || "").localeCompare(String(b.joinedAt || "")) || a.id - b.id)
+      .sort(
+        (a: any, b: any) =>
+          (Number(a.correctResponseMs) || 0) - (Number(b.correctResponseMs) || 0) ||
+          String(a.joinedAt || "").localeCompare(String(b.joinedAt || "")) ||
+          a.id - b.id,
+      )
       .map((s: any) => s.name);
     expect(scorers.map((s: any) => s.name)).toEqual(stableOrder);
     // All 6 appear exactly once.

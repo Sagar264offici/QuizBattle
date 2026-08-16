@@ -180,7 +180,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   color: mode === "test" ? "#030712" : undefined,
                 }}
               >
-                {mode === "test" ? "TEST MODE — 20 QUESTIONS" : "IT CLUB BATTLE"}
+                {mode === "test" ? "TEST MODE — 60 QUESTIONS" : "IT CLUB BATTLE"}
               </span>
               <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#e2e8f0" }}>
                 {question?.roundName || "Round 1"}
@@ -216,7 +216,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               )}
 
               <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
-                QUESTION {question.questionNumber} OF {mode === "test" ? 20 : 100}
+                QUESTION {question.questionNumber} OF {mode === "test" ? 60 : 100}
               </div>
               <div className="projector-question-text">{question.questionText}</div>
 
@@ -319,6 +319,13 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               )}
             </div>
             <div className="score-card-points" style={{ fontSize: "3.5rem", lineHeight: 1.1, marginTop: "6px" }}>{clubScores.IT_INNOVATORS}</div>
+          </div>
+
+          {/* ⚡ FASTEST TAP — speed counts toward the winner ranking */}
+          <div className="glass-card" style={{ padding: "10px 16px", textAlign: "center", border: "1.5px solid rgba(251, 191, 36, 0.3)" }}>
+            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.5px" }}>
+              🏆 Winner Ranking = Correct Answers + Speed · 🔥 3 Fastest in a Row = Bonus
+            </div>
           </div>
 
           {/* ⚡ FASTEST TAP */}

@@ -30,7 +30,9 @@ export default function Footer() {
       }}
     >
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "10px" }}>
-        <span>Made by Sagar Pathak</span>
+        <span className="glossy-text" aria-label="Made by Sagar Pathak">
+          ✦ Made by Sagar Pathak ✦
+        </span>
         <a
           href={GITHUB_URL}
           target="_blank"

@@ -29,7 +29,27 @@ interface Participant {
   correctCount: number;
   attemptCount: number;
   joinedAt: string;
+  correctResponseMs?: number;
+  fastestStreak?: number;
+  bonusPoints?: number;
   sessionToken?: string;
+}
+
+// Server-authoritative per-question answer window — mirrors questionDurationSeconds
+// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-20=15s,
+// Q21-40=30s, Q41+=45s.
+function durationForQuestion(questionNumber: number, mode: QuizMode = "live"): number {
+  const n = Number(questionNumber) || 0;
+  if (mode === "test") {
+    if (n >= 1 && n <= 20) return 15;
+    if (n >= 21 && n <= 40) return 30;
+    if (n >= 41) return 45;
+    return 30;
+  }
+  if (n >= 1 && n <= 40) return 15;
+  if (n >= 81) return 45;
+  if (n >= 41 && n <= 80) return 30;
+  return 30;
 }
 
 // Deterministic roster order — score DESC, correct DESC, joinedAt ASC, id ASC.
@@ -452,7 +472,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 20 QUESTIONS — NOT THE LIVE COLLEGE QUIZ
+              🧪 TEST MODE — 60 QUESTIONS · 3 ROUNDS (15s / 30s / 45s) — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -901,6 +921,14 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                           }}
                         >
                           <span style={{ fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
+                          {((p.fastestStreak || 0) >= 3 || (p.bonusPoints || 0) > 0) && (
+                            <span
+                              title={`${p.fastestStreak || 0}-fastest streak · ${p.bonusPoints || 0} bonus pts`}
+                              style={{ fontSize: "0.8rem", fontWeight: 900, color: "#fb923c", flexShrink: 0 }}
+                            >
+                              🔥{(p.bonusPoints || 0) > 0 ? `+${p.bonusPoints}` : ""}
+                            </span>
+                          )}
                           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>{p.score} pts</span>
                           {p.sessionToken && (
                             <button
@@ -951,6 +979,14 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                           }}
                         >
                           <span style={{ fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
+                          {((p.fastestStreak || 0) >= 3 || (p.bonusPoints || 0) > 0) && (
+                            <span
+                              title={`${p.fastestStreak || 0}-fastest streak · ${p.bonusPoints || 0} bonus pts`}
+                              style={{ fontSize: "0.8rem", fontWeight: 900, color: "#fb923c", flexShrink: 0 }}
+                            >
+                              🔥{(p.bonusPoints || 0) > 0 ? `+${p.bonusPoints}` : ""}
+                            </span>
+                          )}
                           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>{p.score} pts</span>
                           {p.sessionToken && (
                             <button
@@ -981,26 +1017,36 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="glass-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Question Browser</h3>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "20 Questions" : "100 Questions"}</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "60 Questions · 15s/30s/45s" : "100 Questions"}</span>
               </div>
 
               <div className="round-filter-tabs">
-                {[
-                  { label: mode === "test" ? "All (20)" : "All (100)", value: "all" },
-                  { label: "R1: Basics", value: "1" },
-                  { label: "R2: Web", value: "2" },
-                  { label: "R3: Coding", value: "3" },
-                  { label: "R4: AI/Cyber", value: "4" },
-                  { label: "R5: Hack", value: "5" },
-                ].map(({ label, value }) => (
-                  <button
-                    key={value}
-                    className={`filter-tab-btn ${roundFilter === value ? "active" : ""}`}
-                    onClick={() => setRoundFilter(value)}
-                  >
-                    {label}
-                  </button>
-                ))}
+                {(() => {
+                  // Round tabs are derived from the actual question data so the
+                  // live quiz (5 rounds) and test quiz (3 rounds) both show the
+                  // correct round names.
+                  const roundTabs: Array<{ label: string; value: string }> = [
+                    { label: `All (${questions.length})`, value: "all" },
+                  ];
+                  const seenRounds = new Set<number>();
+                  for (const q of questions) {
+                    if (seenRounds.has(q.roundId)) continue;
+                    seenRounds.add(q.roundId);
+                    const short = String(q.roundName || "")
+                      .replace(/^ROUND\s*\d+\s*—?\s*/i, "")
+                      .trim();
+                    roundTabs.push({ label: `R${q.roundId}: ${short}`, value: String(q.roundId) });
+                  }
+                  return roundTabs.map(({ label, value }) => (
+                    <button
+                      key={value}
+                      className={`filter-tab-btn ${roundFilter === value ? "active" : ""}`}
+                      onClick={() => setRoundFilter(value)}
+                    >
+                      {label}
+                    </button>
+                  ));
+                })()}
               </div>
 
               <div className="questions-chip-grid">
@@ -1019,6 +1065,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                       >
                         Q{q.questionNumber}
                         <div style={{ fontSize: "0.65rem", opacity: 0.8 }}>{q.points}p</div>
+                        <div style={{ fontSize: "0.55rem", opacity: 0.7, color: "#38bdf8" }}>{durationForQuestion(q.questionNumber, mode)}s</div>
                       </div>
                     );
                   })}

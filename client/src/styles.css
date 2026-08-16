@@ -1304,3 +1304,277 @@ button, input, select {
     opacity: 0.6;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   GLOSSY BRANDING — TECHNICAL BATTLE THEME
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Glossy gradient text with an animated shine sweep (e.g. "Made by Sagar Pathak") */
+.glossy-text {
+  position: relative;
+  display: inline-block;
+  font-weight: 900;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 30%, #fde68a 50%, #f59e0b 70%, #fbbf24 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: glossyShine 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.35));
+  letter-spacing: 0.5px;
+}
+
+@keyframes glossyShine {
+  0% { background-position: 120% 0; }
+  55%, 100% { background-position: -120% 0; }
+}
+
+/* Glossy pill badge (e.g. "⚡ TECHNICAL BATTLE ⚡") */
+.glossy-badge {
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 0.9rem;
+  letter-spacing: 2px;
+  color: #fff;
+  background: linear-gradient(135deg, #1d4ed8, #2563eb 45%, #06b6d4 80%, #1d4ed8);
+  background-size: 200% 200%;
+  border: 1px solid rgba(125, 211, 252, 0.5);
+  box-shadow: 0 0 18px rgba(37, 99, 235, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  text-shadow: 0 1px 2px rgba(3, 7, 18, 0.6);
+  animation: glossySweep 3.5s ease-in-out infinite;
+}
+
+@keyframes glossySweep {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* Battle title glow */
+.battle-title {
+  text-shadow: 0 0 24px rgba(56, 189, 248, 0.35);
+}
+
+/* VS divider between clubs */
+.vs-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 10px auto 4px;
+  flex-wrap: wrap;
+}
+
+.vs-side {
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.5px;
+}
+
+.vs-stack { color: #60a5fa; }
+.vs-innovators { color: #34d399; }
+
+.vs-badge {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  color: #fff;
+  font-weight: 900;
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* 🛡️ TEST MODE secure badge (anti-AI) */
+.secure-mode-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1.5px solid #10b981;
+  color: #6ee7b7;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
+  animation: fadeIn 0.25s ease-out;
+}
+
+/* ⚠️ TEST MODE anti-AI alert (tab/app switch detected) */
+.security-alert {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(239, 68, 68, 0.92);
+  border: 2px solid #fca5a5;
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  z-index: 400;
+  max-width: 94vw;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  animation: alertShake 0.4s ease-out;
+}
+
+@keyframes alertShake {
+  0%, 100% { transform: translateX(-50%); }
+  20% { transform: translateX(calc(-50% - 6px)); }
+  40% { transform: translateX(calc(-50% + 6px)); }
+  60% { transform: translateX(calc(-50% - 4px)); }
+  80% { transform: translateX(calc(-50% + 4px)); }
+}
+
+/* 🔥 FASTEST-STREAK BONUS toast */
+.bonus-toast {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  color: #fff;
+  padding: 14px 22px;
+  border-radius: 14px;
+  font-weight: 900;
+  font-size: 1rem;
+  letter-spacing: 0.5px;
+  z-index: 400;
+  max-width: 94vw;
+  text-align: center;
+  box-shadow: 0 0 30px rgba(245, 158, 11, 0.6);
+  animation: bonusPop 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes bonusPop {
+  0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+  60% { transform: translateX(-50%) scale(1.12); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   PHONE-FIRST POLISH
+   ════════════════════════════════════════════════════════════════════ */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Bigger, thumb-friendly answer tiles on every phone */
+.option-tile {
+  min-height: 60px;
+  padding: 16px 18px;
+}
+
+.option-tile:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Sticky lock-in bar — keeps the submit button reachable without scrolling
+   back up on phones while a question is live */
+@media (max-width: 640px) {
+  .submit-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+    background: linear-gradient(to top, rgba(9, 13, 22, 0.95) 70%, transparent);
+    padding: 10px 0 6px;
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .option-tile {
+    min-height: 64px;
+  }
+  .option-label {
+    font-size: 0.95rem;
+  }
+  .option-letter {
+    width: 40px;
+    height: 40px;
+    font-size: 1.15rem;
+  }
+  /* Full-width battle hero + friendlier form taps */
+  .form-input {
+    font-size: 16px; /* prevents iOS zoom-on-focus */
+    padding: 15px 16px;
+  }
+  .club-card {
+    padding: 18px 12px;
+  }
+  .club-icon {
+    font-size: 32px;
+  }
+  .btn {
+    min-height: 50px;
+  }
+  .btn-sm {
+    min-height: 40px;
+  }
+  .score-card-points {
+    font-size: 1.9rem;
+  }
+  /* Safe-area insets for notched phones */
+  .app-shell {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .submit-bar {
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+  }
+}
+
+/* Small phones (320–400px) — tighten further so nothing wraps awkwardly */
+@media (max-width: 400px) {
+  .vs-divider {
+    gap: 8px;
+  }
+  .vs-badge {
+    padding: 3px 9px;
+  }
+  .glossy-badge {
+    font-size: 0.78rem;
+    padding: 6px 12px;
+  }
+  .question-main-text {
+    font-size: 1rem;
+  }
+  .question-text-box {
+    padding: 14px;
+  }
+}
+
+/* Subtle battle-grid background on wide screens for the technical-battle feel */
+@media (min-width: 1024px) {
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 189, 248, 0.04) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(circle at 50% 0%, rgba(0, 0, 0, 0.6), transparent 75%);
+    -webkit-mask-image: radial-gradient(circle at 50% 0%, rgba(0, 0, 0, 0.6), transparent 75%);
+    z-index: 0;
+  }
+  .app-shell > *,
+  .projector-shell > * {
+    position: relative;
+    z-index: 1;
+  }
+}
