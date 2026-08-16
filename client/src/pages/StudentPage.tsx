@@ -649,7 +649,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 }}
               >
                 <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "0.95rem", letterSpacing: "0.5px" }}>
-                  🧪 TEST MODE — 60 QUESTIONS · 3 ROUNDS — NOT THE LIVE COLLEGE QUIZ
+                  🧪 TEST MODE — 100 QUESTIONS · 5 ROUNDS — NOT THE LIVE COLLEGE QUIZ
                 </span>
               </div>
             )}
@@ -940,7 +940,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 60 QUESTIONS · 3 ROUNDS — NOT THE LIVE COLLEGE QUIZ
+              🧪 TEST MODE — 100 QUESTIONS · 5 ROUNDS — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}

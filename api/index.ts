@@ -1490,19 +1490,19 @@ const FASTEST_STREAK_BONUS = 5;
  *   Q41–80   → 30s (core rounds)
  *   Q81–100  → 45s (hackathon challenge finale)
  *
- * TEST quiz (60 questions):
- *   Q1–20    → 15s (ROUND 1 — EASY BASICS)
- *   Q21–40   → 30s (ROUND 2 — MID-LEVEL IT)
- *   Q41–60   → 45s (ROUND 3 — LOGIC BUILDING)
+ * TEST quiz (100 questions, same bank as the live college quiz):
+ *   Q1–40    → 15s (ROUND 1-2, easy basics)
+ *   Q41–80   → 30s (ROUND 3-4, core rounds)
+ *   Q81–100  → 45s (ROUND 5 — hackathon finale)
  *
  * Unknown/future question numbers fall back to the default 30s.
  */
 function questionDurationSeconds(questionNumber: number | null | undefined, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    if (n >= 1 && n <= 20) return 15;
-    if (n >= 21 && n <= 40) return 30;
-    if (n >= 41) return 45;
+    if (n >= 1 && n <= 40) return 15;
+    if (n >= 81) return 45;
+    if (n >= 41 && n <= 80) return 30;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;

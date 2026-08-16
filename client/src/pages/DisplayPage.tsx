@@ -180,7 +180,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   color: mode === "test" ? "#030712" : undefined,
                 }}
               >
-                {mode === "test" ? "TEST MODE — 60 QUESTIONS" : "IT CLUB BATTLE"}
+                {mode === "test" ? "TEST MODE — 100 QUESTIONS" : "IT CLUB BATTLE"}
               </span>
               <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#e2e8f0" }}>
                 {question?.roundName || "Round 1"}

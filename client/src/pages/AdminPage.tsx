@@ -479,7 +479,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 60 QUESTIONS · 3 ROUNDS (15s / 30s / 45s) — NOT THE LIVE COLLEGE QUIZ
+              🧪 TEST MODE — 100 QUESTIONS · 5 ROUNDS (15s / 30s / 45s) — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}

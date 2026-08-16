@@ -5,7 +5,7 @@ import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData";
 import { QUESTIONS } from "../server/src/data/questionsData";
 import { ApiError, isSessionExpired } from "../client/src/services/api";
 
-describe("Test mode — 60-question isolated quiz + global student logout", () => {
+describe("Test mode — 100-question isolated quiz + global student logout", () => {
   let server: http.Server;
   let baseUrl: string;
 
@@ -39,17 +39,19 @@ describe("Test mode — 60-question isolated quiz + global student logout", () =
   });
 
   // ── 1. Question set ─────────────────────────────────────────────────────────
-  it("test quiz contains exactly 60 questions across 3 rounds and no other questions", () => {
-    expect(TEST_QUESTIONS).toHaveLength(60);
+  it("test quiz contains exactly 100 questions across 5 rounds and no other questions", () => {
+    expect(TEST_QUESTIONS).toHaveLength(100);
     expect(TEST_QUESTIONS.map((q) => q.questionNumber)).toEqual(
-      Array.from({ length: 60 }, (_, i) => i + 1),
+      Array.from({ length: 100 }, (_, i) => i + 1),
     );
-    // Round structure: Q1-20 Easy (1pt), Q21-40 Mid (2pt), Q41-60 Logic (3pt)
+    // Round structure: Q1-20 (1pt), Q21-40 (1pt), Q41-60 (2pt), Q61-80 (2pt), Q81-100 (3pt)
     const rounds = new Set(TEST_QUESTIONS.map((q) => q.roundId));
-    expect(rounds).toEqual(new Set([1, 2, 3]));
+    expect(rounds).toEqual(new Set([1, 2, 3, 4, 5]));
     expect(TEST_QUESTIONS.filter((q) => q.roundId === 1 && q.points === 1)).toHaveLength(20);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 2 && q.points === 2)).toHaveLength(20);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 3 && q.points === 3)).toHaveLength(20);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 2 && q.points === 1)).toHaveLength(20);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 3 && q.points === 2)).toHaveLength(20);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 4 && q.points === 2)).toHaveLength(20);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 5 && q.points === 3)).toHaveLength(20);
   });
 
   // ── 2. ID isolation ─────────────────────────────────────────────────────────
