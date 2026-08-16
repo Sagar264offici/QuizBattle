@@ -1289,21 +1289,16 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 </div>
               )}
 
-              {/* Student's own standing */}
+              {/* Student's own standing — certificates are admin-only, shared by the host */}
               <div style={{ marginTop: "14px", fontSize: "0.95rem", fontWeight: 800, color: "#fbbf24" }}>
                 Your score: {participant.score} pts
                 {topStudents.some((t) => t.name === participant.name)
                   ? " — you're on the podium! 🎉"
                   : " — thanks for battling!"}
               </div>
-
-              <a
-                href={mode === "test" ? "/test/results" : "/results"}
-                className="btn btn-warning btn-lg"
-                style={{ marginTop: "18px", fontWeight: 900, fontSize: "1rem" }}
-              >
-                🏆 View Final Results & Certificates
-              </a>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "14px" }}>
+                🏅 Certificate winners are announced by the host.
+              </p>
             </div>
           ) : (
             /* WAITING (between questions) */

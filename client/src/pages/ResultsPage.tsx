@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Footer from "../components/Footer";
-import { fetchJson, type QuizMode } from "../services/api";
+import { fetchJson, setAdminPassword, clearAdminPassword, type QuizMode } from "../services/api";
 import {
   downloadCertificatePNG,
   formatDuration,
@@ -44,6 +44,20 @@ const MEDAL_COLORS = ["#fbbf24", "#cbd5e1", "#d48c54"];
 const RANK_NAMES = ["", "1st", "2nd", "3rd"];
 
 export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {}) {
+  // Certificate downloads are ADMIN-ONLY — students see the winner on their
+  // phone but never the certificate generator. Same gate as the host dashboard.
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const stored = sessionStorage.getItem("quizbattle-admin-pw");
+    if (stored) {
+      setAdminPassword(stored);
+      return true;
+    }
+    return false;
+  });
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
   const [data, setData] = useState<LeaderboardData | null>(null);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -59,10 +73,33 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     void load();
     const interval = setInterval(load, 5000);
     return () => clearInterval(interval);
-  }, [mode]);
+  }, [mode, isAuthenticated]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      setAdminPassword(password);
+      const res = await fetchJson<{ ok: boolean }>("/api/admin/login", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      }, "live");
+      if (res.ok) {
+        sessionStorage.setItem("quizbattle-admin-pw", password);
+        setIsAuthenticated(true);
+      }
+    } catch (err: any) {
+      clearAdminPassword();
+      setAuthError(err.message || "Invalid admin password");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   const students = data?.students ?? [];
   // The leaderboard's top 3 — clubs can be mixed (e.g. 1st IT Innovators,
@@ -106,6 +143,70 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
   };
 
   const generateLeaderboardCertificates = async () => downloadList(topThree);
+
+  // 🔒 ADMIN-ONLY — students never see the certificate generator.
+  if (!isAuthenticated) {
+    return (
+      <div className="app-shell">
+        <div className="container-sm" style={{ marginTop: "30px", marginBottom: "40px" }}>
+          <div className="glass-card" style={{ padding: "24px" }}>
+            <div className="quiz-brand" style={{ margin: "0 0 18px" }}>
+              <span className="brand-badge" style={{ background: mode === "test" ? "#f59e0b" : "#2563eb" }}>
+                {mode === "test" ? "TEST RESULTS" : "FINAL RESULTS"}
+              </span>
+              <span className="brand-title">
+                {mode === "test" ? "Test Battle — Final Results" : "Quiz Battle — Final Results"}
+              </span>
+            </div>
+            <div style={{ textAlign: "center", marginBottom: "16px" }}>
+              <div style={{ fontSize: "2.6rem" }}>🔒</div>
+              <h1 className="brand-title" style={{ fontSize: "1.5rem", margin: "6px 0 4px" }}>
+                Host Login Required
+              </h1>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", maxWidth: 420, margin: "0 auto" }}>
+                Certificate generation &amp; downloads are admin-only. Students see the winners on
+                their phone — the host shares certificates from here.
+              </p>
+            </div>
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label className="form-label">Host Password</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Enter the password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              {authError && (
+                <div style={{ color: "#fca5a5", fontSize: "0.875rem", fontWeight: 700, marginBottom: "16px", textAlign: "center" }}>
+                  ⚠️ {authError}
+                </div>
+              )}
+              <button
+                type="submit"
+                className="btn btn-primary btn-block btn-lg"
+                disabled={authLoading || !password}
+              >
+                {authLoading ? "Logging in..." : "ACCESS RESULTS & CERTIFICATES →"}
+              </button>
+            </form>
+            <div style={{ marginTop: "18px", textAlign: "center" }}>
+              <a
+                href={mode === "test" ? "/admin/test" : "/admin"}
+                style={{ color: "var(--text-dim)", fontSize: "0.85rem", textDecoration: "none", fontWeight: 600 }}
+              >
+                ⚙️ Back to Host Dashboard →
+              </a>
+            </div>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
