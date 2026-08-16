@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import Footer from "../components/Footer";
 import { fetchJson, setAdminPassword } from "../services/api";
 
 export default function AdminLoginPage() {
@@ -47,6 +48,7 @@ export default function AdminLoginPage() {
           </button>
         </form>
       </div>
+      <Footer />
     </div>
   );
 }

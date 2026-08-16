@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import Footer from "../components/Footer";
 import { fetchJson, isSessionExpired, isParticipantKicked, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
@@ -113,6 +114,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [showGo, setShowGo] = useState(false);
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
+  // Server-authoritative answer window for the current question (15/30/45s).
+  const [durationSeconds, setDurationSeconds] = useState(30);
 
   // Connection health: last successful sync drives the subtle connecting banner
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -126,6 +129,12 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     STACK_PUSH: 0,
     IT_INNOVATORS: 0,
   });
+
+  // A question is only shown after the host actually starts it. On first
+  // login / reload a leftover or stale question NEVER appears — the student
+  // stays on "WAITING FOR HOST TO START" until a countdown start is observed.
+  const [quizStarted, setQuizStarted] = useState(false);
+  const observedIdleRef = useRef(false);
 
   const lastQuestionIdRef = useRef<number | null>(null);
   const sessionRequestRef = useRef(0);
@@ -151,6 +160,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     setQuestionEndsAt(null);
     setIsSessionLoading(false);
     setConnectionStale(false);
+    setQuizStarted(false);
+    observedIdleRef.current = false;
     setSessionEndedMessage(message);
   };
 
@@ -191,10 +202,24 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       }
       if (data.sessionStatus) {
         setStatus(data.sessionStatus);
+        // A question may only be shown after the host actually starts it.
+        // First login / reload never shows a leftover question — the student
+        // stays on "WAITING FOR HOST TO START" until they observe a countdown
+        // start (or a quick-start after an idle state).
+        if (data.sessionStatus === "PREPARING" || data.sessionStatus === "WAITING") {
+          observedIdleRef.current = true;
+        }
+        if (
+          data.sessionStatus === "COUNTDOWN" ||
+          (data.sessionStatus === "LIVE" && observedIdleRef.current)
+        ) {
+          setQuizStarted(true);
+        }
       }
       setCountdownEndsAt(data.countdownEndsAt);
       setQuestionEndsAt(data.questionEndsAt);
       setCorrectAnswer(data.correctAnswer);
+      if (data.durationSeconds) setDurationSeconds(data.durationSeconds);
 
       // Check if question changed
       if (data.currentQuestion && data.currentQuestion.id !== lastQuestionIdRef.current) {
@@ -265,7 +290,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
     const interval = setInterval(() => {
       if (sessionToken) syncSession(sessionToken);
-    }, 2000);
+    }, 1200);
 
     socket.on("quiz:state", () => {
       if (sessionToken) syncSession(sessionToken);
@@ -311,8 +336,12 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         setCountdownRemaining(null);
         setCountdownEndsAt(null);
         setShowGo(true);
-        // Immediately refetch so the question appears the instant the server
-        // transitions COUNTDOWN -> LIVE, instead of waiting for the next poll.
+        // Reveal the preloaded question the instant the countdown ends — the
+        // question was already delivered during COUNTDOWN, so every device
+        // shows it at the exact same moment with zero extra network wait.
+        setStatus("LIVE");
+        // Immediately refetch so the server-side status catches up
+        // (COUNTDOWN -> LIVE) instead of waiting for the next poll.
         if (sessionToken) void syncSession(sessionToken, true);
         setTimeout(() => setShowGo(false), 900);
       }
@@ -434,6 +463,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       saveCachedAnswer(null);
       setSessionToken("");
       setParticipant(null);
+      setQuizStarted(false);
+      observedIdleRef.current = false;
       setSessionEndedMessage(null);
     }
   };
@@ -446,6 +477,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>⚡</div>
           <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>Connecting to Battle Arena...</div>
         </div>
+        <Footer />
       </div>
     );
   }
@@ -674,12 +706,19 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
             )}
           </div>
         </div>
+        <Footer />
       </div>
     );
   }
 
   // --- 3. RENDER LIVE STUDENT QUIZ INTERFACE ---
   const isClubStack = participant.club === "STACK_PUSH";
+
+  // The question may only be shown once the host has actually started one.
+  // On first login (or reload) a leftover/stale question never appears.
+  const questionVisible =
+    quizStarted && question !== null && (status === "LIVE" || status === "LOCKED" || status === "REVEALED");
+  const badgeStatus = quizStarted || status === "FINISHED" ? status : "WAITING";
 
   return (
     <div className="app-shell">
@@ -780,13 +819,13 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* Status Header */}
           <div className="question-header-bar">
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              {status === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE</span>}
-              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 5s TIMER</span>}
-              {status === "PREPARING" && <span className="badge badge-preparing">HOST IS PREPARING</span>}
-              {status === "WAITING" && <span className="badge badge-waiting">WAITING FOR HOST</span>}
-              {status === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
-              {status === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
-              {status === "FINISHED" && <span className="badge badge-finished">QUIZ COMPLETED</span>}
+              {badgeStatus === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE</span>}
+              {badgeStatus === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 5s TIMER</span>}
+              {badgeStatus === "PREPARING" && <span className="badge badge-preparing">HOST IS PREPARING</span>}
+              {badgeStatus === "WAITING" && <span className="badge badge-waiting">WAITING FOR HOST</span>}
+              {badgeStatus === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
+              {badgeStatus === "REVEALED" && <span className="badge badge-revealed">REVEALED</span>}
+              {badgeStatus === "FINISHED" && <span className="badge badge-finished">QUIZ COMPLETED</span>}
             </div>
 
             {question && (
@@ -798,7 +837,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           </div>
 
           {/* ACTIVE QUESTION STATE (LIVE / LOCKED / REVEALED) */}
-          {question && (status === "LIVE" || status === "LOCKED" || status === "REVEALED") ? (
+          {questionVisible ? (
             <div className="student-question-container" style={{ marginTop: "18px" }}>
               {/* 30-Second Live Question Timer Bar */}
               {status === "LIVE" && questionRemaining !== null && (
@@ -830,14 +869,14 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                     <div
                       style={{
                         height: "100%",
-                        width: `${Math.min(100, Math.max(0, (questionRemaining / 30) * 100))}%`,
+                        width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
                         background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
                         transition: "width 0.1s linear",
                       }}
                     />
                   </div>
                   <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)" }}>
-                    {questionRemaining <= 5 ? "HURRY!" : "30s Limit"}
+                    {questionRemaining <= 5 ? "HURRY!" : `${durationSeconds}s Limit`}
                   </span>
                 </div>
               )}
@@ -920,7 +959,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       fontWeight: 800,
                     }}
                   >
-                    🔒 30 Seconds are up! Answers locked by host.
+                    🔒 {durationSeconds} Seconds are up! Answers locked by host.
                   </div>
                 )}
 
@@ -954,7 +993,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 )}
               </div>
             </div>
-          ) : status === "PREPARING" ? (
+          ) : status === "PREPARING" && quizStarted ? (
             /* POLISHED HOST-PREPARATION WAITING SCREEN */
             <div className="status-state-card preparing-state">
               <div className="preparing-animation" aria-hidden="true">
@@ -981,17 +1020,24 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 {status === "FINISHED" ? "🏆" : "⚡"}
               </div>
               <h2 style={{ fontSize: "1.5rem", fontWeight: 800, marginTop: "10px" }}>
-                {status === "FINISHED" ? "QUIZ BATTLE FINISHED!" : "Waiting for Host to Start Question..."}
+                {status === "FINISHED"
+                  ? "QUIZ BATTLE FINISHED!"
+                  : quizStarted
+                    ? "Waiting for Host to Start Question..."
+                    : "Waiting for Host to Start..."}
               </h2>
               <p style={{ color: "var(--text-muted)", maxWidth: 480, margin: "8px auto 0" }}>
                 {status === "FINISHED"
                   ? "Thank you for participating! Check the big projector screen for final results."
-                  : "As soon as the host launches the question, a 5-second countdown will appear followed by a 30-second timer to answer!"}
+                  : quizStarted
+                    ? "As soon as the host launches the question, a 5-second countdown will appear followed by a timer to answer!"
+                    : "The host will start the quiz from their dashboard. When a question starts, it will appear here automatically."}
               </p>
             </div>
           )}
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

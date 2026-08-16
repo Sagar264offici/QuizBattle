@@ -1409,6 +1409,39 @@ async function redisCommand(cmd: (string | number)[]) {
   }
 }
 
+/**
+ * Batch several INDEPENDENT Redis commands into ONE HTTP request using the
+ * Upstash /pipeline endpoint. Returns an array of results in command order
+ * (a failed command yields REDIS_UNAVAILABLE for its slot); returns
+ * REDIS_UNAVAILABLE itself only when the whole request failed. This is the
+ * key scalability fix: the student session poll used to make 5+ sequential
+ * Redis round-trips per request — with hundreds of students polling, that
+ * multiplied into enormous load and slow responses.
+ */
+async function redisPipeline(cmds: (string | number)[][]) {
+  if (cmds.length === 0) return [];
+  try {
+    const res = await fetch(`${REDIS_URL}/pipeline`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${REDIS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(cmds),
+    });
+    if (!res.ok) return REDIS_UNAVAILABLE;
+    const data = (await res.json()) as unknown;
+    if (!Array.isArray(data)) return REDIS_UNAVAILABLE;
+    return data.map((item: any) => {
+      if (item && typeof item === "object" && "result" in item) return item.result;
+      return REDIS_UNAVAILABLE;
+    });
+  } catch (err) {
+    console.error("Redis pipeline error:", err);
+    return REDIS_UNAVAILABLE;
+  }
+}
+
 const redis = {
   get: <T = string>(key: string): Promise<T | null> => redisCommand(["GET", key]),
   set: (key: string, val: string, opts?: { ex?: number }) => {
@@ -1433,7 +1466,9 @@ const redis = {
  *        ↓  (host START QUIZ → start-countdown)
  *   COUNTDOWN (5s)       — question hidden from students; projector overlay
  *        ↓  (server auto-transitions on the authoritative countdownEndsAt)
- *   LIVE (30s)           — question visible, submissions accepted
+ *   LIVE (15/30/45s)     — question visible, submissions accepted (duration
+ *                          scales with question difficulty: Q1–40 = 15s,
+ *                          Q41–80 = 30s, Q81–100 = 45s)
  *        ↓  (server auto-transitions on questionEndsAt, or host LOCK)
  *   LOCKED               — answers locked, no more submissions
  *        ↓  (host REVEAL)
@@ -1451,7 +1486,23 @@ const redis = {
 type QuizStatus = "PREPARING" | "WAITING" | "COUNTDOWN" | "LIVE" | "LOCKED" | "REVEALED" | "FINISHED";
 
 const COUNTDOWN_SECONDS = 5;
-const QUESTION_SECONDS = 30;
+
+/**
+ * Per-question answer window (server-authoritative), scaled by difficulty:
+ *   Q1–40    → 15s (easy warm-up rounds)
+ *   Q41–80   → 30s (core rounds)
+ *   Q81–100  → 45s (hackathon challenge finale)
+ * Unknown/future question numbers fall back to the default 30s.
+ */
+function questionDurationSeconds(questionNumber: number | null | undefined): number {
+  const n = Number(questionNumber) || 0;
+  if (n >= 1 && n <= 40) return 15;
+  if (n >= 81) return 45;
+  if (n >= 41 && n <= 80) return 30;
+  return 30;
+}
+
+const QUESTION_SECONDS = questionDurationSeconds(1);
 
 interface QuizSessionState {
   status: QuizStatus;
@@ -1593,42 +1644,60 @@ class RedisUnavailableError extends Error {
   }
 }
 
-async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
-  const raw = await redis.get<string>(quizKeys(mode).state);
-  if (raw === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
-  if (!raw) return { ...DEFAULT_STATE };
-  let state: QuizSessionState;
-  try {
-    state = typeof raw === "string" ? JSON.parse(raw) : raw;
-  } catch (_) {
-    return { ...DEFAULT_STATE };
-  }
-
-  // 1. Auto-transition COUNTDOWN (5s) -> LIVE (30s). The server is the sole
-  // authority on when the question actually starts — the student's device
+/**
+ * Server-authoritative auto-transitions applied on every state read:
+ * COUNTDOWN (5s) -> LIVE (30s) once countdownEndsAt passes, and LIVE -> LOCKED
+ * once questionEndsAt passes. Mutates and returns the given state.
+ */
+function applyAutoTransitions(state: QuizSessionState): QuizSessionState {
+  // 1. Auto-transition COUNTDOWN (5s) -> LIVE (15/30/45s). The server is the
+  // sole authority on when the question actually starts — the student's device
   // clock is never used to gate submissions.
   if (state.status === "COUNTDOWN" && state.countdownEndsAt) {
     if (new Date(state.countdownEndsAt).getTime() <= Date.now()) {
       state.status = "LIVE";
       state.questionStartedAt = new Date().toISOString();
       state.countdownEndsAt = null;
-      state.questionEndsAt = new Date(Date.now() + QUESTION_SECONDS * 1000).toISOString();
-      state.durationSeconds = QUESTION_SECONDS;
+      const dur = questionDurationSeconds(state.currentQuestionId);
+      state.questionEndsAt = new Date(Date.now() + dur * 1000).toISOString();
+      state.durationSeconds = dur;
       state.updatedAt = new Date().toISOString();
-      await redis.set(quizKeys(mode).state, JSON.stringify(state));
     }
   }
 
-  // 2. Auto-transition LIVE (30s) -> LOCKED
+  // 2. Auto-transition LIVE -> LOCKED
   if (state.status === "LIVE" && state.questionEndsAt) {
     if (new Date(state.questionEndsAt).getTime() <= Date.now()) {
       state.status = "LOCKED";
       state.updatedAt = new Date().toISOString();
-      await redis.set(quizKeys(mode).state, JSON.stringify(state));
     }
   }
 
   return state;
+}
+
+function parseState(raw: string | null | undefined): QuizSessionState | null {
+  if (!raw) return null;
+  try {
+    const s = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return s && typeof s === "object" ? (s as QuizSessionState) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
+  const raw = await redis.get<string>(quizKeys(mode).state);
+  if (raw === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+  const parsed = parseState(raw);
+  if (!parsed) return { ...DEFAULT_STATE };
+  const before = JSON.stringify(parsed);
+  const next = applyAutoTransitions(parsed);
+  // Only persist when a transition actually happened.
+  if (JSON.stringify(next) !== before) {
+    await redis.set(quizKeys(mode).state, JSON.stringify(next));
+  }
+  return next;
 }
 
 async function setState(mode: QuizMode, patch: Partial<QuizSessionState>): Promise<QuizSessionState> {
@@ -2008,13 +2077,14 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     if (!q) return res.status(400).json({ error: "Question not found" });
     const now = Date.now();
     const endsAt = new Date(now + COUNTDOWN_SECONDS * 1000).toISOString();
-    const qEndsAt = new Date(now + (COUNTDOWN_SECONDS + QUESTION_SECONDS) * 1000).toISOString();
+    const dur = questionDurationSeconds(q.questionNumber);
+    const qEndsAt = new Date(now + (COUNTDOWN_SECONDS + dur) * 1000).toISOString();
     const state = await setState(mode, {
       status: "COUNTDOWN",
       currentQuestionId: q.questionNumber,
       countdownEndsAt: endsAt,
       questionEndsAt: qEndsAt,
-      durationSeconds: QUESTION_SECONDS,
+      durationSeconds: dur,
       questionStartedAt: null,
       correctAnswer: null,
     });
@@ -2030,13 +2100,14 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     const q = getQuestion(Number(questionNumber) || cur.currentQuestionId || 1, mode);
     if (!q) return res.status(400).json({ error: "Question not found" });
     const now = Date.now();
+    const dur = questionDurationSeconds(q.questionNumber);
     const state = await setState(mode, {
       status: "LIVE",
       currentQuestionId: q.questionNumber,
       questionStartedAt: new Date(now).toISOString(),
       countdownEndsAt: null,
-      questionEndsAt: new Date(now + QUESTION_SECONDS * 1000).toISOString(),
-      durationSeconds: QUESTION_SECONDS,
+      questionEndsAt: new Date(now + dur * 1000).toISOString(),
+      durationSeconds: dur,
       correctAnswer: null,
     });
     res.json({ ok: true, state });
@@ -2188,13 +2259,33 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   });
 
   router.get(`${prefix}/admin/summary`, requireAdmin, async (_req, res) => {
-    const state = await getState(mode);
+    const keys = quizKeys(mode);
+    // Batch the state, club scores and roster into ONE Redis round-trip.
+    const results = await redisPipeline([
+      ["GET", keys.state],
+      ["GET", keys.clubScore("STACK_PUSH")],
+      ["GET", keys.clubScore("IT_INNOVATORS")],
+      ["HGETALL", keys.participantsMap],
+    ]);
+    if (results === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+    const [stateRaw, stackRaw, innovRaw, rawMap] = Array.isArray(results) ? results : [undefined, undefined, undefined, undefined];
+
+    let state: QuizSessionState;
+    const parsedState = parseState(stateRaw as string | null);
+    if (!parsedState) {
+      state = { ...DEFAULT_STATE };
+    } else {
+      const before = JSON.stringify(parsedState);
+      state = applyAutoTransitions(parsedState);
+      if (JSON.stringify(state) !== before) {
+        await redis.set(keys.state, JSON.stringify(state));
+      }
+    }
     const currentQ = getQuestion(state.currentQuestionId, mode);
-    const stackScore = await getClubScore("STACK_PUSH", mode);
-    const innovScore = await getClubScore("IT_INNOVATORS", mode);
+    const stackScore = stackRaw ? parseInt(String(stackRaw), 10) || 0 : 0;
+    const innovScore = innovRaw ? parseInt(String(innovRaw), 10) || 0 : 0;
 
     // Get all registered participants from Hash (with fallback to set)
-    const rawMap = await redisCommand(["HGETALL", quizKeys(mode).participantsMap]);
     let participants: any[] = parseHGetAll(rawMap);
 
     if (participants.length === 0) {
@@ -2222,19 +2313,27 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       return true;
     });
 
-    const currentSubmissions: any[] = currentQ
-      ? (
-          await Promise.all(
-            participants.map(async (p) => {
-              try {
-                return await getSubmission(p.id, currentQ.id, mode);
-              } catch (_) {
-                return null;
-              }
-            })
-          )
-        ).filter(Boolean)
-      : [];
+    // Fetch every participant's submission for the current question in ONE
+    // batched round-trip instead of N sequential/concurrent calls.
+    let currentSubmissions: any[] = [];
+    if (currentQ) {
+      const subResults =
+        participants.length > 0
+          ? await redisPipeline(participants.map((p) => ["GET", keys.submission(p.id, currentQ.id)]))
+          : [];
+      if (Array.isArray(subResults)) {
+        currentSubmissions = subResults
+          .map((subRaw: any) => {
+            if (!subRaw) return null;
+            try {
+              return typeof subRaw === "string" ? JSON.parse(subRaw) : subRaw;
+            } catch (_) {
+              return null;
+            }
+          })
+          .filter(Boolean);
+      }
+    }
 
     const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
     const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
@@ -2327,20 +2426,35 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   router.get(`${prefix}/quiz-state`, async (_req, res) => {
     const state = await getState(mode);
     const currentQ = getQuestion(state.currentQuestionId, mode);
-    // During PREPARING (and between questions) no question may leak — a
-    // student or projector can never see Q1 before the host starts the quiz.
-    const safeQ = state.status === "PREPARING" ? null : sanitizeQuestion(currentQ);
+    // No question may leak before the host starts the quiz (PREPARING) or
+    // between questions (WAITING). During COUNTDOWN the sanitized question IS
+    // preloaded so the projector reveals it the instant the countdown ends —
+    // in sync with every student device.
+    const safeQ =
+      state.status === "PREPARING" || state.status === "WAITING" || state.status === "FINISHED"
+        ? null
+        : sanitizeQuestion(currentQ);
     res.json({ session: { ...state, currentQuestion: safeQ }, currentQuestion: safeQ });
   });
 
   router.get(`${prefix}/leaderboard`, async (_req, res) => {
-    const s = await getClubScore("STACK_PUSH", mode);
-    const i = await getClubScore("IT_INNOVATORS", mode);
+    const keys = quizKeys(mode);
+    // One batched round-trip for the whole leaderboard instead of 5+.
+    const results = await redisPipeline([
+      ["GET", keys.clubScore("STACK_PUSH")],
+      ["GET", keys.clubScore("IT_INNOVATORS")],
+      ["HGETALL", keys.participantsMap],
+      ["GET", keys.state],
+    ]);
+    if (results === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+    const [stackRaw, innovRaw, rawMap, stateRaw] = Array.isArray(results) ? results : [undefined, undefined, undefined, undefined];
+
+    const s = stackRaw ? parseInt(String(stackRaw), 10) || 0 : 0;
+    const i = innovRaw ? parseInt(String(innovRaw), 10) || 0 : 0;
 
     // Deterministic student leaderboard: score DESC, correctCount DESC,
     // joinedAt ASC, id ASC. Stable tie-breakers guarantee equal-score students
     // never randomly reorder between polls.
-    const rawMap = await redisCommand(["HGETALL", quizKeys(mode).participantsMap]);
     const participants = parseHGetAll(rawMap);
     const sorted = [...participants].sort(compareParticipants);
     const students = sorted.map((p) => ({
@@ -2353,10 +2467,21 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     }));
     const topStudents = students.slice(0, 3).map((p, idx) => ({ ...p, rank: idx + 1 }));
 
-    const state = await getState(mode);
+    let state: QuizSessionState;
+    const parsed = parseState(stateRaw as string | null);
+    if (!parsed) {
+      state = { ...DEFAULT_STATE };
+    } else {
+      const before = JSON.stringify(parsed);
+      state = applyAutoTransitions(parsed);
+      if (JSON.stringify(state) !== before) {
+        await redis.set(keys.state, JSON.stringify(state));
+      }
+    }
+
     let fastestTap = null;
-    const perQuestion = state.currentQuestionId ? await redis.get<string>(quizKeys(mode).fastest(state.currentQuestionId)) : null;
-    const rawFastest = perQuestion || (await redis.get<string>(quizKeys(mode).fastestLatest));
+    const perQuestion = state.currentQuestionId ? await redis.get<string>(keys.fastest(state.currentQuestionId)) : null;
+    const rawFastest = perQuestion || (await redis.get<string>(keys.fastestLatest));
     if (rawFastest) {
       try {
         fastestTap = typeof rawFastest === "string" ? JSON.parse(rawFastest) : rawFastest;
@@ -2400,18 +2525,108 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     const token = String(req.query.token ?? "");
     if (!token) return res.status(400).json({ error: "Missing token" });
 
-    const participant = await getParticipant(token, mode);
-    if (!participant) {
-      const rejection = await participantRejection(token, mode);
-      return res.status(rejection.status).json({ error: rejection.error, code: rejection.code });
+    const keys = quizKeys(mode);
+    // The entire poll is served from ONE batched Redis round-trip (session
+    // generation + kicked-check + participant record + quiz state) instead of
+    // 5+ sequential HTTPS calls. With hundreds of students polling every ~1s
+    // this cuts Redis traffic by roughly 5x and makes every poll much faster.
+    const results = await redisPipeline([
+      ["GET", keys.sessionGen],
+      ["SISMEMBER", keys.kickedTokens, token],
+      ["HGET", keys.participantsMap, token],
+      ["GET", keys.state],
+    ]);
+    if (results === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+    const [genRaw, kicked, hashRaw, stateRaw] = Array.isArray(results) ? results : [undefined, undefined, undefined, undefined];
+
+    const currentGen = (() => {
+      const n = genRaw ? parseInt(String(genRaw), 10) : 0;
+      return n > 0 ? n : 1;
+    })();
+
+    // Kicked students are rejected immediately — no further lookups needed.
+    if (kicked === 1) {
+      return res.status(401).json({ code: "PARTICIPANT_KICKED", error: "You were removed by the host." });
     }
 
-    const state = await getState(mode);
+    // Participant lookup: participants hash first, then participant-key
+    // fallback, then pure token decoding (no extra Redis calls on the happy
+    // path). Mirrors getParticipant() exactly.
+    let participant: any = null;
+    if (hashRaw) {
+      try {
+        const p = typeof hashRaw === "string" ? JSON.parse(hashRaw) : hashRaw;
+        if (p?.name) participant = p;
+      } catch (_) {}
+    }
+    if (!participant) {
+      const keyRaw = await redis.get<string>(keys.participantKey(token));
+      if (keyRaw) {
+        try {
+          const p = typeof keyRaw === "string" ? JSON.parse(keyRaw) : keyRaw;
+          if (p?.name) {
+            participant = p;
+            await redisCommand(["HSET", keys.participantsMap, token, JSON.stringify(p)]);
+          }
+        } catch (_) {}
+      }
+    }
+    if (!participant) {
+      const d = decodeToken(token);
+      if (d && d.gen === currentGen) {
+        participant = {
+          id: d.id,
+          name: d.name,
+          club: d.club,
+          sessionToken: token,
+          gen: d.gen,
+          score: 0,
+          correctCount: 0,
+          wrongCount: 0,
+          attemptCount: 0,
+          joinedAt: new Date().toISOString(),
+        };
+        await saveParticipant(participant, mode);
+      }
+    }
+
+    if (!participant) {
+      // Rejection without extra Redis calls: decoding the token distinguishes
+      // an expired session (old generation) from a genuinely unknown token.
+      const d = decodeToken(token);
+      if (d && d.gen !== currentGen) {
+        return res.status(401).json({ code: "SESSION_EXPIRED", error: "Your session was ended by the host." });
+      }
+      return res.status(404).json({ error: "Participant not found" });
+    }
+    if ((Number(participant.gen) || 0) !== currentGen) {
+      return res.status(401).json({ code: "SESSION_EXPIRED", error: "Your session was ended by the host." });
+    }
+
+    // Quiz state with the same server-authoritative auto-transitions.
+    let state: QuizSessionState;
+    const parsed = parseState(stateRaw as string | null);
+    if (!parsed) {
+      state = { ...DEFAULT_STATE };
+    } else {
+      const before = JSON.stringify(parsed);
+      state = applyAutoTransitions(parsed);
+      if (JSON.stringify(state) !== before) {
+        await redis.set(keys.state, JSON.stringify(state));
+      }
+    }
+
     const currentQ = getQuestion(state.currentQuestionId, mode);
     const submission = currentQ ? await getSubmission(participant.id, currentQ.id, mode) : null;
-    // Students never see a question while the host is still preparing or
-    // between questions — the question only appears once it is COUNTDOWN->LIVE.
-    const showQuestion = state.status === "LIVE" || state.status === "LOCKED" || state.status === "REVEALED";
+    // Students never see a question while the host is preparing or between
+    // questions. During COUNTDOWN the sanitized question IS preloaded so every
+    // device can reveal it at the exact same moment countdownEndsAt passes —
+    // no waiting for the next poll + server transition.
+    const showQuestion =
+      state.status === "LIVE" ||
+      state.status === "LOCKED" ||
+      state.status === "REVEALED" ||
+      state.status === "COUNTDOWN";
 
     res.json({
       participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, sessionToken: participant.sessionToken },

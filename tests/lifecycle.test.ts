@@ -102,13 +102,17 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
     expect(endsAt - before).toBeGreaterThan(4000);
     expect(endsAt - before).toBeLessThan(8000);
 
-    // Students still never see the question during the countdown.
+    // During the countdown the SANITIZED question is preloaded so every device
+    // can reveal it at the exact same moment countdownEndsAt passes — but the
+    // correct answer must never leak to students.
     const reg = await register("live", "Watcher", "IT_INNOVATORS");
     const poll = await (
       await api(`/participants/session?token=${encodeURIComponent(reg.data.participant.sessionToken)}`)
     ).json();
     expect(poll.sessionStatus).toBe("COUNTDOWN");
-    expect(poll.currentQuestion).toBeNull();
+    expect(poll.currentQuestion).not.toBeNull();
+    expect(poll.currentQuestion.questionNumber).toBe(1);
+    expect(poll.currentQuestion.correctAnswer).toBeUndefined();
 
     // Advance the server clock past countdownEndsAt: the next state read
     // auto-transitions COUNTDOWN -> LIVE (server-authoritative).

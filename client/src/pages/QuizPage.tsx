@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import Footer from "../components/Footer";
 import Leaderboard from "../components/Leaderboard";
 import { fetchJson } from "../services/api";
 import { socket } from "../socket";
@@ -93,6 +94,7 @@ export default function QuizPage() {
         <div className="card" style={{ maxWidth: 420, margin: "50px auto" }}>
           <h2>Loading participant session...</h2>
         </div>
+        <Footer />
       </div>
     );
   }
@@ -267,6 +269,7 @@ export default function QuizPage() {
           <Leaderboard />
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

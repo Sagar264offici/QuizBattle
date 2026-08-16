@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Footer from "../components/Footer";
 import { fetchJson, type QuizMode } from "../services/api";
 
 export interface Member {
@@ -386,6 +387,7 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
           </div>
         )}
       </div>
+      <Footer />
     </div>
   );
 }

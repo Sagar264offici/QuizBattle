@@ -29,6 +29,7 @@
     "http-proxy-middleware": "^4.2.0",
     "pdfjs-dist": "^6.2.108",
     "prisma": "^7.9.1",
+    "react-qr-code": "^2.2.0",
     "react-router-dom": "^7.18.2",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import QRCode from "react-qr-code";
+import Footer from "../components/Footer";
 import { fetchJson, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
@@ -42,6 +44,8 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [showGo, setShowGo] = useState(false);
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
+  // Server-authoritative answer window for the current question (15/30/45s).
+  const [durationSeconds, setDurationSeconds] = useState(30);
 
   const [clubScores, setClubScores] = useState({ STACK_PUSH: 0, IT_INNOVATORS: 0 });
   const [topStudents, setTopStudents] = useState<TopStudent[]>([]);
@@ -57,6 +61,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
             countdownEndsAt: string | null;
             questionEndsAt: string | null;
             correctAnswer: string | null;
+            durationSeconds?: number;
           };
           currentQuestion: Question | null;
         }>("/api/quiz-state", undefined, mode),
@@ -72,6 +77,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
       setCorrectAnswer(stateData.session.correctAnswer);
       setCountdownEndsAt(stateData.session.countdownEndsAt);
       setQuestionEndsAt(stateData.session.questionEndsAt);
+      if (stateData.session.durationSeconds) setDurationSeconds(stateData.session.durationSeconds);
 
       if (leaderboardData.clubs) {
         setClubScores({
@@ -86,7 +92,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   useEffect(() => {
     syncState();
-    const interval = setInterval(syncState, 1500);
+    const interval = setInterval(syncState, 1200);
     socket.on("quiz:state", syncState);
     socket.on("leaderboard:update", syncState);
     socket.on("display:reveal", (data) => {
@@ -133,6 +139,9 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   const isStackLeading = clubScores.STACK_PUSH > clubScores.IT_INNOVATORS;
   const isInnovatorsLeading = clubScores.IT_INNOVATORS > clubScores.STACK_PUSH;
+
+  // Join link for students — the same one the admin copies on the host page.
+  const joinUrl = `${window.location.origin}${mode === "test" ? "/test" : "/student"}`;
 
   const podiumEmojis = ["🥇", "🥈", "🥉"];
   const podiumColors = ["#fbbf24", "#94a3b8", "#cd7f32"];
@@ -194,12 +203,12 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* Question State Display */}
           {question && (status === "LIVE" || status === "LOCKED" || status === "REVEALED") ? (
             <div>
-              {/* 30s Big Stage Timer Bar */}
+              {/* Dynamic Live Timer Bar (15s / 30s / 45s per question) */}
               {status === "LIVE" && questionRemaining !== null && (
                 <div style={{ marginTop: "16px", background: "rgba(255,255,255,0.08)", borderRadius: "999px", height: "10px", overflow: "hidden" }}>
                   <div style={{
                     height: "100%",
-                    width: `${Math.min(100, Math.max(0, (questionRemaining / 30) * 100))}%`,
+                    width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
                     background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
                     transition: "width 0.2s linear",
                   }} />
@@ -262,8 +271,26 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           )}
         </div>
 
-        {/* Right Column: Scoreboard + Top 3 + Fastest Tap */}
+        {/* Right Column: Join QR + Scoreboard + Top 3 + Fastest Tap */}
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* 📱 SCAN TO JOIN — QR code to the live quiz */}
+          <div className="glass-card" style={{ padding: "16px 18px", textAlign: "center", border: "1.5px solid rgba(59, 130, 246, 0.4)", boxShadow: "0 0 25px rgba(59, 130, 246, 0.2)" }}>
+            <div style={{ fontSize: "0.8rem", color: "#38bdf8", textTransform: "uppercase", fontWeight: 800, letterSpacing: "1px", marginBottom: "10px" }}>
+              📱 Scan to Join the Battle
+            </div>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div style={{ background: "#ffffff", padding: "10px", borderRadius: "12px", display: "inline-block" }}>
+                <QRCode value={joinUrl} size={148} fgColor="#0f172a" bgColor="#ffffff" style={{ display: "block" }} />
+              </div>
+            </div>
+            <div style={{ marginTop: "10px", fontSize: "0.85rem", fontWeight: 700, color: "#e2e8f0" }}>
+              {mode === "test" ? "Test Quiz" : "IT Club Battle"}
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "2px", wordBreak: "break-all" }}>
+              {joinUrl}
+            </div>
+          </div>
+
           {/* STACK.PUSH SCORE */}
           <div className="score-card stack" style={{
             padding: "22px 20px",
@@ -384,6 +411,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

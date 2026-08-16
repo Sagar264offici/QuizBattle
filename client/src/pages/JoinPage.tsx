@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import Footer from "../components/Footer";
 import { fetchJson } from "../services/api";
 
 export default function JoinPage() {
@@ -130,6 +131,7 @@ export default function JoinPage() {
           </button>
         </form>
       </div>
+      <Footer />
     </div>
   );
 }

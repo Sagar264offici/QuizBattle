@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import Footer from "../components/Footer";
 import { fetchJson, setAdminPassword, clearAdminPassword, type QuizMode } from "../services/api";
 
 interface Question {
@@ -116,9 +117,10 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [actionLoading, setActionLoading] = useState(false);
   const [notification, setNotification] = useState("");
 
-  // 30s Live Question Timer
+  // Live Question Timer (dynamic per-question duration 15s / 30s / 45s)
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
+  const [durationSeconds, setDurationSeconds] = useState(30);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -165,6 +167,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
         setClubs(sumData.clubs || []);
       }
       setQuestionEndsAt(sumData.session?.questionEndsAt || null);
+      if (sumData.session?.durationSeconds) setDurationSeconds(sumData.session.durationSeconds);
 
       // Only replace roster arrays when the actual contents changed — this
       // keeps the DOM stable across polls and stops the list from re-rendering
@@ -192,7 +195,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   useEffect(() => {
     if (!isAuthenticated) return;
     refreshData();
-    const interval = setInterval(refreshData, 1500);
+    const interval = setInterval(refreshData, 1200);
     return () => clearInterval(interval);
   }, [isAuthenticated, refreshData]);
 
@@ -321,6 +324,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             </form>
           </div>
         </div>
+        <Footer />
       </div>
     );
   }
@@ -495,7 +499,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 </div>
               </div>
 
-              {/* 30s Live Timer Progress bar */}
+              {/* Dynamic Live Timer Progress bar (15s / 30s / 45s per question) */}
               {status === "LIVE" && questionRemaining !== null && (
                 <div
                   style={{
@@ -516,7 +520,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     <div
                       style={{
                         height: "100%",
-                        width: `${Math.min(100, Math.max(0, (questionRemaining / 30) * 100))}%`,
+                        width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
                         background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
                         transition: "width 0.2s linear",
                       }}
@@ -930,6 +934,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }
