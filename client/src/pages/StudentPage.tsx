@@ -886,7 +886,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
                     </p>
                     <p style={{ marginTop: "8px", fontWeight: 700, color: "#fbbf24" }}>
-                      🎯 The test battle has 100 questions in 5 rounds — 15s / 30s / 45s.
+                      🎯 The test battle has 100 questions in 5 rounds — 10s / 30s / 45s.
                       Winners are decided by correct answers AND speed, with 🔥 bonus points for 3
                       fastest-in-a-row. Anti-AI secure mode is ON.
                     </p>
