@@ -42,7 +42,7 @@ function durationForQuestion(questionNumber: number, mode: QuizMode = "live"): n
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
     if (n >= 1 && n <= 20) return 15;
-    if (n >= 21 && n <= 50) return 30;
+    if (n >= 21 && n <= 40) return 30;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;
@@ -480,7 +480,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 100 QUESTIONS · 5 ROUNDS (10s / 30s / 45s) — NOT THE LIVE COLLEGE QUIZ
+              🧪 TEST MODE — 40 QUESTIONS · 4 ROUNDS (15s / 30s) — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -1025,7 +1025,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="glass-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Question Browser</h3>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "60 Questions · 10s/30s/45s" : "100 Questions"}</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "40 Questions · 15s/30s" : "100 Questions"}</span>
               </div>
 
               <div className="round-filter-tabs">

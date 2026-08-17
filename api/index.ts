@@ -1558,8 +1558,10 @@ const FASTEST_STREAK_BONUS = 5;
 function questionDurationSeconds(questionNumber: number | null | undefined, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
+    // Guess The Output (Q1-10): 15s, Probability (Q11-20): 15s,
+    // Logical Reasoning (Q21-30): 30s, Mathematical Reasoning (Q31-40): 30s
     if (n >= 1 && n <= 20) return 15;
-    if (n >= 21 && n <= 50) return 30;
+    if (n >= 21 && n <= 40) return 30;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;
@@ -1740,6 +1742,12 @@ class RedisQuotaExceededError extends Error {
  * COUNTDOWN (5s) -> LIVE (30s) once countdownEndsAt passes, and LIVE -> LOCKED
  * once questionEndsAt passes. Mutates and returns the given state.
  */
+/**
+ * Seconds to keep the answer visible on screen before auto-advancing to the
+ * next question. Gives the audience a brief moment to see the correct answer.
+ */
+const REVEAL_DISPLAY_SECONDS = 5;
+
 function applyAutoTransitions(state: QuizSessionState, mode: QuizMode = "live"): QuizSessionState {
   // 1. Auto-transition COUNTDOWN (5s) -> LIVE (15/30/45s). The server is the
   // sole authority on when the question actually starts — the student's device
@@ -1756,10 +1764,30 @@ function applyAutoTransitions(state: QuizSessionState, mode: QuizMode = "live"):
     }
   }
 
-  // 2. Auto-transition LIVE -> LOCKED
+  // 2. Auto-transition LIVE -> REVEALED (skip LOCKED) when timer expires.
+  //    The correct answer is stored so the projector can display it.
   if (state.status === "LIVE" && state.questionEndsAt) {
     if (new Date(state.questionEndsAt).getTime() <= Date.now()) {
-      state.status = "LOCKED";
+      const q = getQuestion(state.currentQuestionId, mode);
+      state.status = "REVEALED";
+      state.correctAnswer = q?.correctAnswer ?? null;
+      state.questionEndsAt = null;
+      state.updatedAt = new Date().toISOString();
+    }
+  }
+
+  // 3. Auto-transition REVEALED -> WAITING (next question) after a brief
+  //    display window so the audience can see the correct answer.
+  if (state.status === "REVEALED" && state.updatedAt) {
+    const revealedMs = new Date(state.updatedAt).getTime();
+    if (Date.now() - revealedMs >= REVEAL_DISPLAY_SECONDS * 1000) {
+      const nextNum = Math.min((state.currentQuestionId || 1) + 1, getQuestionCount(mode));
+      state.status = "WAITING";
+      state.currentQuestionId = nextNum;
+      state.questionStartedAt = null;
+      state.countdownEndsAt = null;
+      state.questionEndsAt = null;
+      state.correctAnswer = null;
       state.updatedAt = new Date().toISOString();
     }
   }

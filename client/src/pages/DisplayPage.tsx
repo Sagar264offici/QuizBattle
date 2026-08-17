@@ -47,6 +47,9 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
   // Server-authoritative answer window for the current question (15/30/45s).
   const [durationSeconds, setDurationSeconds] = useState(30);
 
+  // Previous question answer — shown on projector while next question is live
+  const [prevAnswer, setPrevAnswer] = useState<{ questionNumber: number; correctAnswer: string; optionA: string; optionB: string; optionC: string; optionD: string } | null>(null);
+
   const [clubScores, setClubScores] = useState({ STACK_PUSH: 0, IT_INNOVATORS: 0 });
   const [topStudents, setTopStudents] = useState<TopStudent[]>([]);
   const [fastestTap, setFastestTap] = useState<FastestTap | null>(null);
@@ -71,6 +74,22 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           fastestTap?: FastestTap | null;
         }>("/api/leaderboard", undefined, mode),
       ]);
+
+      // Track previous question answer for projector display
+      if (stateData.session.correctAnswer && stateData.currentQuestion && 
+          (stateData.session.status === "REVEALED" || stateData.session.status === "WAITING" || stateData.session.status === "LIVE")) {
+        setPrevAnswer((prev) => {
+          const curQ = stateData.currentQuestion!;
+          const curAnswer = stateData.session.correctAnswer;
+          // Store when we're in REVEALED state, or when question changes
+          if (stateData.session.status === "REVEALED" && curAnswer) {
+            return { questionNumber: curQ.questionNumber, correctAnswer: curAnswer, optionA: curQ.optionA, optionB: curQ.optionB, optionC: curQ.optionC, optionD: curQ.optionD };
+          }
+          // If question changed and we have a previous answer, keep showing it
+          if (prev && curQ.questionNumber !== prev.questionNumber) return prev;
+          return prev;
+        });
+      }
 
       setStatus(stateData.session.status);
       setQuestion(stateData.currentQuestion);
@@ -182,7 +201,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   color: mode === "test" ? "#030712" : undefined,
                 }}
               >
-                {mode === "test" ? "TEST MODE — 100 QUESTIONS" : "IT CLUB BATTLE"}
+                {mode === "test" ? "TEST MODE — 40 QUESTIONS" : "IT CLUB BATTLE"}
               </span>
               <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#e2e8f0" }}>
                 {question?.roundName || "Round 1"}
@@ -218,7 +237,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               )}
 
               <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
-                QUESTION {question.questionNumber} OF {mode === "test" ? 60 : 100}
+                QUESTION {question.questionNumber} OF {mode === "test" ? 40 : 100}
               </div>
               <div className="projector-question-text">{question.questionText}</div>
 
@@ -239,6 +258,30 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   );
                 })}
               </div>
+
+              {/* Previous Question Answer Banner — shown while a new question is live */}
+              {status === "LIVE" && prevAnswer && question && prevAnswer.questionNumber !== question.questionNumber && (
+                <div style={{
+                  marginTop: "18px",
+                  padding: "14px 18px",
+                  borderRadius: "12px",
+                  background: "linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(6, 182, 212, 0.1))",
+                  border: "1.5px solid rgba(16, 185, 129, 0.4)",
+                  boxShadow: "0 0 20px rgba(16, 185, 129, 0.15)",
+                }}>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "#34d399", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "6px" }}>
+                    ✓ PREVIOUS ANSWER — Q{prevAnswer.questionNumber}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <span style={{ fontSize: "1.6rem", fontWeight: 900, color: "#10b981", fontFamily: "var(--font-mono)" }}>
+                      {prevAnswer.correctAnswer}
+                    </span>
+                    <span style={{ fontSize: "1rem", color: "#e2e8f0", fontWeight: 600 }}>
+                      {prevAnswer[`option${prevAnswer.correctAnswer as "A" | "B" | "C" | "D"}`]}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           ) : status === "FINISHED" ? (
             /* 🏆 FINISHED — projector shows the winner podium */
