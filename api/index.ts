@@ -1558,10 +1558,8 @@ const FASTEST_STREAK_BONUS = 5;
 function questionDurationSeconds(questionNumber: number | null | undefined, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    if (n >= 1 && n <= 20) return 10;
-    if (n >= 21 && n <= 40) return 30;
-    if (n >= 81) return 45;
-    if (n >= 41 && n <= 80) return 30;
+    if (n >= 1 && n <= 20) return 15;
+    if (n >= 21 && n <= 50) return 30;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;

@@ -36,15 +36,13 @@ interface Participant {
 }
 
 // Server-authoritative per-question answer window — mirrors questionDurationSeconds
-// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-20=10s,
-// Q21-40=30s, Q41-80=30s, Q81+=45s.
+// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-20=15s,
+// Q21-50=30s.
 function durationForQuestion(questionNumber: number, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    if (n >= 1 && n <= 20) return 10;
-    if (n >= 21 && n <= 40) return 30;
-    if (n >= 81) return 45;
-    if (n >= 41 && n <= 80) return 30;
+    if (n >= 1 && n <= 20) return 15;
+    if (n >= 21 && n <= 50) return 30;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;
