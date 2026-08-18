@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Footer from "../components/Footer";
+import QuestionText from "../components/QuestionText";
 import Leaderboard from "../components/Leaderboard";
 import { fetchJson } from "../services/api";
 import { socket } from "../socket";
@@ -147,9 +148,11 @@ export default function QuizPage() {
                   ROUND {question.round ?? "LIVE"}
                 </div>
                 <h3 style={{ marginTop: 0 }}>Q{question.questionNumber}</h3>
-                <p style={{ fontSize: "1.05rem", marginBottom: 18 }}>
-                  {question.questionText}
-                </p>
+                <QuestionText
+                  className="question-text"
+                  text={question.questionText}
+                  style={{ fontSize: "1.05rem", marginBottom: 18 }}
+                />
 
                 <div className="answer-grid">
                   {["A", "B", "C", "D"].map((optionKey) => {

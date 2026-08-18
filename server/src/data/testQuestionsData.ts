@@ -2,8 +2,8 @@
  * TEST MODE QUESTION SET — QUIZBATTLE
  *
  * New 40-question set: IT & Reasoning quiz
- *   - Round 1 (Q1–Q10):  Guess The Output — 1pt, 15s
- *   - Round 2 (Q11–Q20): Probability — 1pt, 15s
+ *   - Round 1 (Q1–Q10):  Guess The Output — 1pt, 25s
+ *   - Round 2 (Q11–Q20): Probability — 1pt, 30s
  *   - Round 3 (Q21–Q30): Logical Reasoning — 2pts, 30s
  *   - Round 4 (Q31–Q40): Mathematical Reasoning — 3pts, 30s
  */

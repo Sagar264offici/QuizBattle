@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import Footer from "../components/Footer";
+import QuestionText from "../components/QuestionText";
 import { fetchJson, setAdminPassword, clearAdminPassword, type QuizMode } from "../services/api";
 
 interface Question {
@@ -1088,7 +1089,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     <span className="question-points-pill">+{previewQuestion.points} pts</span>
                   </div>
                   <div style={{ fontWeight: 800, fontSize: "0.95rem", marginBottom: "12px" }}>
-                    Q{previewQuestion.questionNumber}. {previewQuestion.questionText}
+                    Q{previewQuestion.questionNumber}. <QuestionText text={previewQuestion.questionText} />
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", fontSize: "0.82rem", marginBottom: "12px" }}>
                     {(["A", "B", "C", "D"] as const).map((key) => (

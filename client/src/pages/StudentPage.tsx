@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Footer from "../components/Footer";
+import QuestionText from "../components/QuestionText";
 import { fetchJson, isSessionExpired, isParticipantKicked, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
@@ -886,7 +887,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
                     </p>
                     <p style={{ marginTop: "8px", fontWeight: 700, color: "#fbbf24" }}>
-                      🎯 The test battle has 100 questions in 5 rounds — 10s / 30s / 45s.
+                      🎯 The test battle has 40 questions in 4 rounds — 25s / 30s.
                       Winners are decided by correct answers AND speed, with 🔥 bonus points for 3
                       fastest-in-a-row. Anti-AI secure mode is ON.
                     </p>
@@ -1134,8 +1135,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
               {/* Question Text Box */}
               <div className="question-text-box">
-                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 100 : 100}</div>
-                <div className="question-main-text">{question.questionText}</div>
+                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 40 : 100}</div>
+                <QuestionText className="question-main-text" text={question.questionText} />
               </div>
 
               {/* 🛡️ Anti-cheat name watermark — makes any screenshot/photo

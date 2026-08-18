@@ -5,7 +5,7 @@ import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData";
 import { QUESTIONS } from "../server/src/data/questionsData";
 import { ApiError, isSessionExpired } from "../client/src/services/api";
 
-describe("Test mode — 100-question isolated quiz + global student logout", () => {
+describe("Test mode — 40-question isolated quiz + global student logout", () => {
   let server: http.Server;
   let baseUrl: string;
 

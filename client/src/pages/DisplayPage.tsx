@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import Footer from "../components/Footer";
+import QuestionText from "../components/QuestionText";
 import { fetchJson, type QuizMode } from "../services/api";
 import { socket } from "../socket";
 
@@ -239,7 +240,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
                 QUESTION {question.questionNumber} OF {mode === "test" ? 40 : 100}
               </div>
-              <div className="projector-question-text">{question.questionText}</div>
+              <QuestionText className="projector-question-text" text={question.questionText} />
 
               <div className="projector-options-grid">
                 {(["A", "B", "C", "D"] as const).map((key) => {
