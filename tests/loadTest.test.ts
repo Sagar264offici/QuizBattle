@@ -285,10 +285,14 @@ describe("Production-readiness load rehearsal — 60 concurrent students (test m
         .reduce((s: number, p: any) => s + (p.score || 0), 0);
       const stackClub = summary.clubs.find((c: any) => c.name === "STACK_PUSH").score;
       const innovClub = summary.clubs.find((c: any) => c.name === "IT_INNOVATORS").score;
-      const awarded = summary.currentSubmissions.reduce((s: number, sub: any) => s + (sub.pointsAwarded || 0), 0);
+      const awarded = summary.currentSubmissions.reduce(
+        (s: number, sub: any) => s + (sub.pointsAwarded || 0) + (sub.speedBonus || 0),
+        0,
+      );
 
       expect(stackSum).toBe(stackClub);
       expect(innovSum).toBe(innovClub);
+      // Club totals = base + speed bonuses, matching the sum of submissions.
       expect(stackClub + innovClub).toBe(awarded);
       metrics.scoreConsistent = true;
       metrics.clubScoresMatchParticipants = true;

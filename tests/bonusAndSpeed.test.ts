@@ -1,19 +1,24 @@
 /**
- * Fastest-streak bonus + speed-based winner ranking tests (test mode).
+ * Fastest-finger scoring + team eligibility tests (test mode).
  *
- *  - 🔥 BONUS: every 3 questions answered correctly AND fastest in a row
- *    (contiguous) awards FASTEST_STREAK_BONUS (5) extra points.
- *  - 🏆 RANKING: equal-score students are ranked by total correct-answer
- *    response time (faster wins ties) via compareParticipants.
+ *  - ⚡ SPEED BONUS: among valid CORRECT answers to the same question the
+ *    server assigns ranks by (responseTimeMs, submittedAt, participantId):
+ *    1st → +3, 2nd → +2, 3rd → +1, later → +0. Wrong answers earn 0 and never
+ *    receive a speed bonus.
+ *  - 🏆 TEAM RESULTS: teamScore = Σ participant earned points (base + speed).
+ *    A club is eligible only when EVERY registered member has at least one
+ *    accepted submission; the winner is the highest-scoring eligible club,
+ *    with deterministic tie-breaks (more correct answers, then lower aggregate
+ *    correct-answer response time, then TEAM TIE).
  */
 import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import http from "node:http";
-import { app } from "../api/index";
+import { app, computeTeamResults } from "../api/index";
 import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe("Fastest-streak bonus + speed-based ranking (test mode)", () => {
+describe("Fastest-finger scoring + team eligibility (test mode)", () => {
   let server: http.Server;
   let baseUrl: string;
 
@@ -84,115 +89,196 @@ describe("Fastest-streak bonus + speed-based ranking (test mode)", () => {
     await api("/test/admin/open-portal", { method: "POST", headers: adminHeaders, body: "{}" });
   });
 
-  it("awards +5 bonus at 3 consecutive fastest-correct answers and resets the streak on a slower/wrong answer", async () => {
+  it("awards +3/+2/+1/+0 per-question speed bonus by server arrival order; wrong = 0", async () => {
     const alice = await register("Fast Alice", "STACK_PUSH");
-    const bob = await register("Slow Bob", "IT_INNOVATORS");
+    const bob = await register("Second Bob", "STACK_PUSH");
+    const riya = await register("Third Riya", "IT_INNOVATORS");
+    const dave = await register("Fourth Dave", "IT_INNOVATORS");
 
-    let bonusAwarded = 0;
-    for (let i = 0; i < 3; i++) {
-      const q = TEST_QUESTIONS[i]; // R1 questions (1 pt each)
+    const q = TEST_QUESTIONS[0]; // 1-pt question
+    await startQuestion(q.questionNumber);
+
+    // Sequential arrival order is deterministic: Alice → Bob → Riya → Dave.
+    const a = await submit(alice.sessionToken, q.id, q.correctAnswer);
+    await sleep(40);
+    const b = await submit(bob.sessionToken, q.id, q.correctAnswer);
+    await sleep(40);
+    const r = await submit(riya.sessionToken, q.id, q.correctAnswer);
+    await sleep(40);
+    const d = await submit(dave.sessionToken, q.id, q.correctAnswer);
+    await sleep(40);
+    // Wrong answer (Eve) earns 0 and no speed bonus.
+    const eve = await register("Wrong Eve", "IT_INNOVATORS");
+    const e = await submit(eve.sessionToken, q.id, "D");
+    expect(e.status).toBe(200);
+    await advanceToWaiting();
+
+    expect((a.data as any).speedRank).toBe(1);
+    expect((a.data as any).speedBonus).toBe(3);
+    expect((b.data as any).speedRank).toBe(2);
+    expect((b.data as any).speedBonus).toBe(2);
+    expect((r.data as any).speedRank).toBe(3);
+    expect((r.data as any).speedBonus).toBe(1);
+    expect((d.data as any).speedRank).toBe(4);
+    expect((d.data as any).speedBonus).toBe(0);
+    expect((e.data as any).speedRank).toBe(0);
+    expect((e.data as any).speedBonus).toBe(0);
+
+    // earnedPoints = base + speed: 1+3, 1+2, 1+1, 1+0, 0.
+    const lb = await leaderboard();
+    const row = (name: string) => lb.students.find((s: any) => s.name === name);
+    expect(row("Fast Alice").score).toBe(4);
+    expect(row("Fast Alice").basePoints).toBe(1);
+    expect(row("Fast Alice").speedBonusPoints).toBe(3);
+    expect(row("Second Bob").score).toBe(3);
+    expect(row("Third Riya").score).toBe(2);
+    expect(row("Fourth Dave").score).toBe(1);
+    expect(row("Wrong Eve").score).toBe(0);
+  });
+
+  it("team score = Σ earned points (base + speed) and the leaderboard declares the highest eligible team", async () => {
+    // STACK_PUSH: 2 members, both contribute (7 + 6 = 13).
+    const sp1 = await register("SP One", "STACK_PUSH");
+    const sp2 = await register("SP Two", "STACK_PUSH");
+    // IT_INNOVATORS: 2 members, both contribute (5 + 4 = 9).
+    const ii1 = await register("II One", "IT_INNOVATORS");
+    const ii2 = await register("II Two", "IT_INNOVATORS");
+
+    // Two 3-point questions (Java pattern round, Q46+Q47) so the totals are
+    // non-trivial.
+    for (const q of [TEST_QUESTIONS[45], TEST_QUESTIONS[46]]) {
       await startQuestion(q.questionNumber);
-      const a = await submit(alice.sessionToken, q.id, q.correctAnswer);
-      expect(a.status).toBe(200);
-      // Bob answers later → Alice is the fastest correct answer for Q1-Q3.
-      await sleep(60);
-      const b = await submit(bob.sessionToken, q.id, q.correctAnswer);
-      expect(b.status).toBe(200);
-      bonusAwarded = (a.data as any).bonusAwarded;
+      const a = await submit(sp1.sessionToken, q.id, q.correctAnswer);
+      expect((a.data as any).speedRank).toBe(1);
+      await sleep(30);
+      await submit(sp2.sessionToken, q.id, q.correctAnswer);
+      await sleep(30);
+      await submit(ii1.sessionToken, q.id, q.correctAnswer);
+      await sleep(30);
+      await submit(ii2.sessionToken, q.id, q.correctAnswer);
       await advanceToWaiting();
     }
 
-    // Third consecutive fastest-correct answer awards the bonus.
-    expect(bonusAwarded).toBe(5);
-
-    // Alice: 3 correct (3 pts) + 5 bonus = 8. Bob: 3 correct (3 pts), no bonus.
     const lb = await leaderboard();
-    const aliceRow = lb.students.find((s: any) => s.name === "Fast Alice");
-    const bobRow = lb.students.find((s: any) => s.name === "Slow Bob");
-    expect(aliceRow.score).toBe(8);
-    expect(aliceRow.bonusPoints).toBe(5);
-    expect(aliceRow.fastestStreak).toBe(3);
-    expect(bobRow.score).toBe(3);
-    expect(bobRow.bonusPoints).toBe(0);
+    const sp = lb.teamResults.find((t: any) => t.club === "STACK_PUSH");
+    const ii = lb.teamResults.find((t: any) => t.club === "IT_INNOVATORS");
 
-    // 4th question: Bob answers FIRST (and correct) → Alice is no longer the
-    // fastest, her streak resets to 0 and no bonus is awarded.
-    const q4 = TEST_QUESTIONS[3];
-    await startQuestion(q4.questionNumber);
-    const b4 = await submit(bob.sessionToken, q4.id, q4.correctAnswer);
-    await sleep(60);
-    const a4 = await submit(alice.sessionToken, q4.id, q4.correctAnswer);
-    expect((a4.data as any).bonusAwarded).toBe(0);
-    expect((a4.data as any).fastestStreak).toBe(0);
-    await advanceToWaiting();
+    // Per question: first = 3+3=6, second = 3+2=5, third = 3+1=4, fourth = 3+0=3.
+    expect(sp.score).toBe((6 + 5) * 2);
+    expect(sp.basePoints).toBe(3 * 4);
+    expect(sp.speedBonus).toBe((3 + 2) * 2);
+    expect(sp.requiredMembers).toBe(2);
+    expect(sp.contributedMembers).toBe(2);
+    expect(sp.eligible).toBe(true);
+    expect(ii.score).toBe((4 + 3) * 2);
+    expect(ii.eligible).toBe(true);
 
-    // A wrong answer also resets the streak.
-    const q5 = TEST_QUESTIONS[4];
-    await startQuestion(q5.questionNumber);
-    const wrong = ["A", "B", "C", "D"].find((x) => x !== q5.correctAnswer) as string;
-    const a5 = await submit(alice.sessionToken, q5.id, wrong);
-    expect((a5.data as any).fastestStreak).toBe(0);
+    // Highest eligible team wins — the same numbers the UI displays.
+    expect(lb.teamWinner).toBe("STACK_PUSH");
+    expect(lb.clubs.find((c: any) => c.name === "STACK_PUSH").score).toBe(sp.score);
   });
 
-  it("accumulates totalResponseMs across every submitted answer (correct and wrong)", async () => {
-    const alice = await register("Timed Alice", "STACK_PUSH");
+  it("an ineligible team can never win, even with a higher score (participation required)", async () => {
+    const sp1 = await register("SP Active A", "STACK_PUSH");
+    const sp2 = await register("SP Active B", "STACK_PUSH");
+    const superstar = await register("Superstar", "IT_INNOVATORS");
+    await register("Ghost", "IT_INNOVATORS"); // never submits
 
-    // Q1 — correct answer. totalResponseMs should include this response time.
+    // Q1: superstar first (4), SP members 2nd/3rd (3 + 2). SP = 5, II = 4.
+    // Q2+Q3: only the superstar answers (4 each) → II pulls ahead to 12.
+    // SP never answers Q2/Q3 → SP stays 5 but is fully contributing (2/2).
     const q1 = TEST_QUESTIONS[0];
-    await startQuestion(q1.questionNumber);
-    const s1 = await submit(alice.sessionToken, q1.id, q1.correctAnswer);
-    expect(s1.status).toBe(200);
-    const t1 = (s1.data as any).submission.responseTimeMs as number;
-    await advanceToWaiting();
-
-    // Q2 — WRONG answer. totalResponseMs grows again, correctResponseMs does not.
     const q2 = TEST_QUESTIONS[1];
-    await startQuestion(q2.questionNumber);
-    const wrong = ["A", "B", "C", "D"].find((x) => x !== q2.correctAnswer) as string;
-    const s2 = await submit(alice.sessionToken, q2.id, wrong);
-    expect(s2.status).toBe(200);
-    const t2 = (s2.data as any).submission.responseTimeMs as number;
-    await advanceToWaiting();
-
-    const lb = await leaderboard();
-    const row = lb.students.find((s: any) => s.name === "Timed Alice");
-    // Total timing covers ALL answers submitted; correct-only timing covers just Q1.
-    expect(row.totalResponseMs).toBeGreaterThanOrEqual(t1 + t2);
-    expect(row.totalResponseMs).toBe(t1 + t2);
-    expect(row.correctResponseMs).toBeGreaterThanOrEqual(t1);
-    expect(row.correctResponseMs).toBe(t1);
-    expect(row.attemptCount).toBe(2);
-    expect(row.wrongCount).toBe(1);
-    // The score reflects only the correct answer (wrong = 0 pts, no bonus at streak 1).
-    expect(row.score).toBe(q1.points);
-  });
-
-  it("ranks equal scorers by total correct-answer response time (faster wins)", async () => {
-    const alice = await register("Speedy", "STACK_PUSH");
-    const bob = await register("Leisurely", "IT_INNOVATORS");
-
-    // Both answer Q1 and Q2 correctly (2 pts each, no bonus at streak 2).
-    for (let i = 0; i < 2; i++) {
-      const q = TEST_QUESTIONS[i];
+    const q3 = TEST_QUESTIONS[2];
+    for (const q of [q1, q2, q3]) {
       await startQuestion(q.questionNumber);
-      await submit(alice.sessionToken, q.id, q.correctAnswer);
-      await sleep(80);
-      await submit(bob.sessionToken, q.id, q.correctAnswer);
+      if (q === q1) {
+        await submit(superstar.sessionToken, q.id, q.correctAnswer);
+        await sleep(30);
+        await submit(sp1.sessionToken, q.id, q.correctAnswer);
+        await sleep(30);
+        await submit(sp2.sessionToken, q.id, q.correctAnswer);
+      } else {
+        await submit(superstar.sessionToken, q.id, q.correctAnswer);
+      }
       await advanceToWaiting();
     }
 
     const lb = await leaderboard();
-    const aliceRow = lb.students.find((s: any) => s.name === "Speedy");
-    const bobRow = lb.students.find((s: any) => s.name === "Leisurely");
+    const sp = lb.teamResults.find((t: any) => t.club === "STACK_PUSH");
+    const ii = lb.teamResults.find((t: any) => t.club === "IT_INNOVATORS");
+    expect(sp.eligible).toBe(true);
+    expect(ii.eligible).toBe(false); // Ghost never submitted
+    expect(ii.score).toBeGreaterThan(sp.score); // the superstar out-scored the team
+    // The eligible team wins — a superstar cannot carry a non-participating club.
+    expect(lb.teamWinner).toBe("STACK_PUSH");
+  });
 
-    // Same score and same correct count — but Alice answered faster.
-    expect(aliceRow.score).toBe(2);
-    expect(bobRow.score).toBe(2);
-    expect(aliceRow.correctCount).toBe(bobRow.correctCount);
-    expect(aliceRow.correctResponseMs).toBeLessThan(bobRow.correctResponseMs);
+  it("computeTeamResults: eligibility, correct-answer tie-break, speed tie-break, and TEAM TIE", () => {
+    const P = (club: string, patch: any) => ({
+      club,
+      score: 0,
+      basePoints: 0,
+      speedBonusPoints: 0,
+      correctCount: 0,
+      correctResponseMs: 0,
+      attemptCount: 1,
+      ...patch,
+    });
 
-    // Speed breaks the tie: Alice ranks above Bob.
-    const rankOf = (name: string) => lb.students.findIndex((s: any) => s.name === name);
-    expect(rankOf("Speedy")).toBeLessThan(rankOf("Leisurely"));
+    // No eligible club → no winner.
+    expect(computeTeamResults([P("STACK_PUSH", { attemptCount: 0 }), P("IT_INNOVATORS", { attemptCount: 0 })]).winner).toBeNull();
+
+    // Highest eligible score wins.
+    let res = computeTeamResults([
+      P("STACK_PUSH", { score: 152, correctCount: 60 }),
+      P("IT_INNOVATORS", { score: 329, correctCount: 90 }),
+    ]);
+    expect(res.winner).toBe("IT_INNOVATORS");
+
+    // Tie-break 1: identical score → more total correct answers wins.
+    res = computeTeamResults([
+      P("STACK_PUSH", { score: 100, correctCount: 40, correctResponseMs: 10000 }),
+      P("IT_INNOVATORS", { score: 100, correctCount: 45, correctResponseMs: 9000 }),
+    ]);
+    expect(res.winner).toBe("IT_INNOVATORS");
+
+    // Tie-break 2: identical score + correct count → lower aggregate
+    // correct-answer response time wins.
+    res = computeTeamResults([
+      P("STACK_PUSH", { score: 100, correctCount: 40, correctResponseMs: 8000 }),
+      P("IT_INNOVATORS", { score: 100, correctCount: 40, correctResponseMs: 12000 }),
+    ]);
+    expect(res.winner).toBe("STACK_PUSH");
+
+    // Exact tie → TEAM TIE (never random).
+    res = computeTeamResults([
+      P("STACK_PUSH", { score: 100, correctCount: 40, correctResponseMs: 9000 }),
+      P("IT_INNOVATORS", { score: 100, correctCount: 40, correctResponseMs: 9000 }),
+    ]);
+    expect(res.winner).toBe("TIE");
+
+    // An ineligible higher-scoring club loses to an eligible lower-scoring one.
+    res = computeTeamResults([
+      P("STACK_PUSH", { score: 50, correctCount: 20, attemptCount: 0 }),
+      P("IT_INNOVATORS", { score: 30, correctCount: 12 }),
+    ]);
+    expect(res.winner).toBe("IT_INNOVATORS");
+  });
+
+  it("a single non-contributing member makes the whole club ineligible", async () => {
+    const a = await register("Contributor", "STACK_PUSH");
+    await register("Lazy", "STACK_PUSH");
+    const q = TEST_QUESTIONS[0];
+    await startQuestion(q.questionNumber);
+    await submit(a.sessionToken, q.id, q.correctAnswer);
+    await advanceToWaiting();
+
+    const lb = await leaderboard();
+    const sp = lb.teamResults.find((t: any) => t.club === "STACK_PUSH");
+    expect(sp.requiredMembers).toBe(2);
+    expect(sp.contributedMembers).toBe(1);
+    expect(sp.eligible).toBe(false);
+    expect(lb.teamWinner).toBeNull();
   });
 });

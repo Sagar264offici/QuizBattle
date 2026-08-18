@@ -1559,11 +1559,35 @@ const COUNTDOWN_SECONDS = 5;
  */
 
 /**
- * Bonus points awarded whenever a participant answers 3 questions correctly
- * AND fastest in a row (contiguous fastest-correct streak). Awarded again at
- * every multiple of 3 (6, 9, ...) while the streak is unbroken.
+ * Fastest-finger speed bonus (server-authoritative, per question).
+ *
+ * Among all valid CORRECT answers to the same question, ranked by the server
+ * (responseTimeMs ASC, submission timestamp ASC, participant id ASC):
+ *   1st correct  → +3 speed bonus
+ *   2nd correct  → +2 speed bonus
+ *   3rd correct  → +1 speed bonus
+ *   4th and later → +0 speed bonus
+ * Wrong answers never receive a speed bonus.
+ *
+ * earnedPoints = basePoints (question.points) + speedBonus
  */
-const FASTEST_STREAK_BONUS = 5;
+
+/**
+ * True when a SUBMIT_LUA result is neither the "DUPLICATE" sentinel (checked
+ * by the caller first) nor a valid ranked JSON payload. The store accepted the
+ * submission but returned something unexpected — the caller fails closed so a
+ * malformed response can never lead to double-scoring or a lost score.
+ */
+function rankedStatusInvalid(status: unknown): boolean {
+  if (typeof status === "string" && status.startsWith("{")) {
+    try {
+      return JSON.parse(status)?.status !== "OK";
+    } catch (_) {
+      return true;
+    }
+  }
+  return true;
+}
 
 /**
  * Per-question answer window (server-authoritative), scaled by difficulty and
@@ -1574,20 +1598,18 @@ const FASTEST_STREAK_BONUS = 5;
  *   Q41–80   → 30s (core rounds)
  *   Q81–100  → 45s (hackathon challenge finale)
  *
- * TEST quiz (70 questions, 7 rounds):
- *   Q1–40    → 15s (ROUNDS 1–4 — GK rounds, 1 pt)
- *   Q41–50   → 25s (ROUND 5 — Guess The Output, 2 pts)
- *   Q51–70   → 30s (ROUNDS 6–7 — Reasoning & Puzzles, 2–3 pts)
+ * TEST quiz (50 questions, 3 rounds):
+ *   Q1–20    → 15s (ROUND 1 — Easy IT & Technology, 1 pt)
+ *   Q21–50   → 45s (ROUNDS 2–3 — C/C++ Output + Java Patterns, 2–3 pts)
  *
  * Unknown/future question numbers fall back to the default 30s.
  */
 function questionDurationSeconds(questionNumber: number | null | undefined, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    // GK rounds (Q1-40): 15s, Guess The Output (Q41-50): 25s,
-    // Logical/Mathematical Reasoning + Hard Puzzles (Q51-70): 30s
-    if (n >= 1 && n <= 40) return 15;
-    if (n >= 41 && n <= 50) return 25;
+    // Easy IT trivia (Q1-20): 15s; coding/output/pattern rounds (Q21-50): 45s
+    if (n >= 1 && n <= 20) return 15;
+    if (n >= 21 && n <= 50) return 45;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;
@@ -1678,6 +1700,11 @@ function quizKeys(mode: QuizMode) {
     clubScore: (club: string) => (isTest ? `score:test:${club}` : `score:${club}`),
     fastest: (qid: number) => (isTest ? `fastest:test:${qid}` : `fastest:${qid}`),
     fastestLatest: isTest ? "fastest:test:latest" : "fastest:latest",
+    // Deterministic per-question speed ranking: a JSON array of correct
+    // submissions ordered by (responseTimeMs, submittedAt, participantId).
+    // Rank 1/2/3 earn +3/+2/+1 speed bonus; the array is frozen once the
+    // question leaves LIVE (no new submissions can mutate it).
+    rank: (qid: number) => (isTest ? `rank:test:${qid}` : `rank:${qid}`),
   };
 }
 
@@ -2025,8 +2052,9 @@ async function getParticipant(token: string, mode: QuizMode = "live") {
       wrongCount: 0,
       attemptCount: 0,
       correctResponseMs: 0,
-      fastestStreak: 0,
-      bonusPoints: 0,
+      totalResponseMs: 0,
+      basePoints: 0,
+      speedBonusPoints: 0,
       joinedAt: new Date().toISOString(),
     };
     await saveParticipant(p, mode);
@@ -2085,36 +2113,76 @@ async function saveParticipant(p: any, mode: QuizMode = "live") {
  * deleted on a fresh wipe, so SCARD is an accurate live count.
  */
 
-// ── Atomically save a submission AND record the fastest correct tap ──
-// Runs as a single atomic unit on Redis. Returns:
-//   "OK_FASTEST" — submission saved AND this is (still) the fastest correct answer
-//   "OK"         — submission saved, but not the fastest
-//   "DUPLICATE"  — the participant already submitted for this question (SET NX
-//                  failed); the fastest record is NEVER touched in this case,
-//                  so a rejected duplicate can never hijack the leaderboard.
-// The fastest tap is only ever overwritten by a genuinely faster ACCEPTED
-// submission.
+// ── Atomically save a submission AND maintain the per-question fastest-finger
+// ranking ─────────────────────────────────────────────────────────────────────
+// Runs as a single atomic unit on Redis (and mirrored in the in-memory store).
+//
+// KEYS[1] = submission key            (SET NX — duplicate guard)
+// KEYS[2] = rank list key             (JSON array of correct submissions)
+// KEYS[3] = fastest tap key           (rank-1 record for the "fastest tap" UI)
+// KEYS[4] = fastestLatest key         (rank-1 record for the leaderboard)
+// ARGV[1] = full submission JSON      ({ ... , isCorrect, pointsAwarded })
+// ARGV[2] = rank detail JSON          (correct answers only; "" for wrong)
+//
+// Returns (JSON-encoded object):
+//   { status: "OK", rank, speedBonus } — submission saved; rank is the
+//     participant's deterministic position among correct answers (1-based;
+//     0 for wrong answers), speedBonus is +3/+2/+1/0 by rank.
+//   "DUPLICATE" — the participant already submitted for this question; the
+//     ranking and fastest records are NEVER touched in this case, so a
+//     rejected duplicate can never hijack the leaderboard.
+//
+// The ranking is fully deterministic: (responseTimeMs ASC, submittedAt ASC,
+// participantId ASC). Because it lives in ONE atomic script, two answers
+// arriving in the same instant still receive distinct, server-ordered ranks —
+// only one answer can ever hold rank 1/2/3.
 const SUBMIT_LUA = `
 local saved = redis.call('SET', KEYS[1], ARGV[1], 'EX', 86400, 'NX')
 if not saved then
   return 'DUPLICATE'
 end
-local isFastest = 0
-if ARGV[3] ~= '' then
-  local cur = redis.call('GET', KEYS[2])
-  local curTime
-  if cur then
-    local ok, obj = pcall(cjson.decode, cur)
-    if ok and obj and obj.responseTimeMs then curTime = tonumber(obj.responseTimeMs) end
-  end
-  if (not curTime) or tonumber(ARGV[2]) < curTime then
-    redis.call('SET', KEYS[2], ARGV[3], 'EX', 86400)
-    redis.call('SET', KEYS[3], ARGV[3], 'EX', 86400)
-    isFastest = 1
+if ARGV[2] == '' then
+  -- Wrong answer: no speed ranking, no fastest-tap update.
+  return cjson.encode({ status = 'OK', rank = 0, speedBonus = 0 })
+end
+-- Correct answer: insert into the deterministic per-question ranking.
+local list = {}
+local cur = redis.call('GET', KEYS[2])
+if cur then
+  local ok, obj = pcall(cjson.decode, cur)
+  if ok and type(obj) == 'table' then list = obj end
+end
+local entry = cjson.decode(ARGV[2])
+local inserted = false
+for i, e in ipairs(list) do
+  if not inserted then
+    local t = tonumber(entry.responseTimeMs) - tonumber(e.responseTimeMs)
+    local tsCmp = 0
+    if t == 0 then
+      if (entry.submittedAt or '') < (e.submittedAt or '') then tsCmp = -1
+      elseif (entry.submittedAt or '') > (e.submittedAt or '') then tsCmp = 1 end
+    end
+    local idCmp = 0
+    if t == 0 and tsCmp == 0 then
+      idCmp = tonumber(entry.participantId) - tonumber(e.participantId)
+    end
+    if t < 0 or (t == 0 and (tsCmp < 0 or (tsCmp == 0 and idCmp < 0))) then
+      table.insert(list, i, entry)
+      inserted = true
+      break
+    end
   end
 end
-if isFastest == 1 then return 'OK_FASTEST' end
-return 'OK'
+if not inserted then table.insert(list, entry) end
+for i, e in ipairs(list) do
+  e.rank = i
+  e.speedBonus = i == 1 and 3 or (i == 2 and 2 or (i == 3 and 1 or 0))
+end
+redis.call('SET', KEYS[2], cjson.encode(list), 'EX', 86400)
+local fastest = list[1]
+redis.call('SET', KEYS[3], cjson.encode(fastest), 'EX', 86400)
+redis.call('SET', KEYS[4], cjson.encode(fastest), 'EX', 86400)
+return cjson.encode({ status = 'OK', rank = tonumber(entry.rank), speedBonus = tonumber(entry.speedBonus) })
 `;
 
 // ── Mode-scoped data cleanup ─────────────────────────────────────────────────
@@ -2157,7 +2225,7 @@ async function clearModeData(mode: QuizMode) {
   await redis.set(keys.clubScore("STACK_PUSH"), "0");
   await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
   await redisCommand(["DEL", keys.state, keys.nextId, keys.sessionGen, keys.kickedTokens]);
-  await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
+  await delKeys(getQuestionIds(mode).flatMap((qid) => [keys.fastest(qid), keys.rank(qid)]));
   await redisCommand(["DEL", keys.fastestLatest]);
 }
 
@@ -2194,7 +2262,7 @@ async function logoutAllStudents(mode: QuizMode) {
   await redisCommand(["DEL", keys.nameIndex]);
   await redis.set(keys.clubScore("STACK_PUSH"), "0");
   await redis.set(keys.clubScore("IT_INNOVATORS"), "0");
-  await delKeys(getQuestionIds(mode).map((qid) => keys.fastest(qid)));
+  await delKeys(getQuestionIds(mode).flatMap((qid) => [keys.fastest(qid), keys.rank(qid)]));
   await redisCommand(["DEL", keys.fastestLatest]);
 
   return gen;
@@ -2212,6 +2280,67 @@ function sanitizeSubmission(sub: any) {
   if (!sub) return sub;
   const { isCorrect, pointsAwarded, ...safe } = sub;
   return safe;
+}
+
+/**
+ * Server-authoritative team results.
+ *
+ * teamScore = Σ participant earned points (base + speed bonus). It is computed
+ * from the SAME participant records that feed the scoreboard, so the displayed
+ * totals and the winner logic can never disagree (the historical bug where the
+ * UI showed e.g. 152 vs 329 but the winner calculation picked the wrong club).
+ *
+ * Eligibility (team participation):
+ *   requiredMembers    = every registered participant of the club
+ *   contributedMembers = participants with at least one accepted submission
+ *   eligible           = contributedMembers === requiredMembers (and > 0)
+ * Joining, viewing, or an invalid/duplicate submission never counts as a
+ * contribution. A club can win only when EVERY member has contributed.
+ *
+ * Winner: the eligible team with the highest teamScore. Tie-break 1: most
+ * total correct answers. Tie-break 2: lowest aggregate response time among
+ * valid correct answers. If still exactly equal: "TIE" — never random.
+ */
+export function computeTeamResults(participants: any[]) {
+  const clubs = ["STACK_PUSH", "IT_INNOVATORS"] as const;
+  const results = clubs.map((club) => {
+    const members = participants.filter((p) => p?.club === club);
+    const requiredMembers = members.length;
+    const contributedMembers = members.filter((p) => (Number(p?.attemptCount) || 0) > 0).length;
+    const eligible = requiredMembers > 0 && contributedMembers === requiredMembers;
+    return {
+      club,
+      score: members.reduce((sum, p) => sum + (Number(p?.score) || 0), 0),
+      basePoints: members.reduce((sum, p) => sum + (Number(p?.basePoints) || 0), 0),
+      speedBonus: members.reduce((sum, p) => sum + (Number(p?.speedBonusPoints) || 0), 0),
+      correctAnswers: members.reduce((sum, p) => sum + (Number(p?.correctCount) || 0), 0),
+      totalCorrectResponseMs: members.reduce((sum, p) => sum + (Number(p?.correctResponseMs) || 0), 0),
+      requiredMembers,
+      contributedMembers,
+      eligible,
+    };
+  });
+
+  const eligibleResults = results.filter((r) => r.eligible);
+  let winner: string | null = null;
+  if (eligibleResults.length > 0) {
+    const sorted = [...eligibleResults].sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.correctAnswers - a.correctAnswers ||
+        a.totalCorrectResponseMs - b.totalCorrectResponseMs,
+    );
+    const top = sorted[0];
+    const tied = sorted.filter(
+      (r) =>
+        r.score === top.score &&
+        r.correctAnswers === top.correctAnswers &&
+        r.totalCorrectResponseMs === top.totalCorrectResponseMs,
+    );
+    winner = tied.length > 1 ? "TIE" : top.club;
+  }
+
+  return { results, winner };
 }
 
 // ── Express App ───────────────────────────────────────────────────────────────
@@ -2478,8 +2607,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         p.attemptCount = 0;
         p.correctResponseMs = 0;
         p.totalResponseMs = 0;
-        p.fastestStreak = 0;
-        p.bonusPoints = 0;
+        p.basePoints = 0;
+        p.speedBonusPoints = 0;
         p.lastQuestionId = null;
         p.lastAnswer = null;
         p.lastSubmittedAt = null;
@@ -2489,6 +2618,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         }
       }
     }
+    // Submissions were wiped — the per-question speed rankings derived from
+    // them must go too, otherwise a stale ranking could be replayed on a reset.
+    await delKeys(getQuestionIds(mode).map((qid) => keys.rank(qid)));
 
     const state = await setState(mode, {
       status: "PREPARING",
@@ -2647,6 +2779,29 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     const stackParticipants = participants.filter((p) => p.club === "STACK_PUSH");
     const innovatorsParticipants = participants.filter((p) => p.club === "IT_INNOVATORS");
 
+    // Fastest-finger breakdown for the current question — shown to the admin
+    // after reveal (BASE POINTS / FASTEST +3 / SECOND +2 / THIRD +1 / others).
+    let questionBreakdown = null;
+    if (currentQ) {
+      const rankRaw = await redis.get<string>(quizKeys(mode).rank(currentQ.id));
+      if (rankRaw) {
+        try {
+          const list = typeof rankRaw === "string" ? JSON.parse(rankRaw) : rankRaw;
+          if (Array.isArray(list) && list.length > 0) {
+            questionBreakdown = {
+              questionNumber: currentQ.questionNumber,
+              basePoints: currentQ.points,
+              correctCount: list.length,
+              fastest: list[0] ?? null,
+              second: list[1] ?? null,
+              third: list[2] ?? null,
+              otherCorrectCount: Math.max(0, list.length - 3),
+            };
+          }
+        } catch (_) {}
+      }
+    }
+
     res.json({
       session: { ...state, currentQuestion: currentQ },
       currentQuestionId: state.currentQuestionId ?? null,
@@ -2663,6 +2818,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       currentSubmissions,
       answersReceived: currentSubmissions.length,
       answersPending: Math.max(0, participants.length - currentSubmissions.length),
+      questionBreakdown,
     });
   });
 
@@ -2724,8 +2880,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         attemptCount: p.attemptCount || 0,
         correctResponseMs: p.correctResponseMs || 0,
         totalResponseMs: p.totalResponseMs || 0,
-        fastestStreak: p.fastestStreak || 0,
-        bonusPoints: p.bonusPoints || 0,
+        basePoints: p.basePoints || 0,
+        speedBonusPoints: p.speedBonusPoints || 0,
         submitted,
         // Admin-only endpoint — token needed for the individual kick action.
         sessionToken: String(p.sessionToken || ""),
@@ -2793,21 +2949,24 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     const keys = quizKeys(mode);
     // One batched round-trip for the whole leaderboard instead of 5+.
     const results = await redisPipeline([
-      ["GET", keys.clubScore("STACK_PUSH")],
-      ["GET", keys.clubScore("IT_INNOVATORS")],
       ["HGETALL", keys.participantsMap],
       ["GET", keys.state],
     ]);
     if (results === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
-    const [stackRaw, innovRaw, rawMap, stateRaw] = Array.isArray(results) ? results : [undefined, undefined, undefined, undefined];
-
-    const s = stackRaw ? parseInt(String(stackRaw), 10) || 0 : 0;
-    const i = innovRaw ? parseInt(String(innovRaw), 10) || 0 : 0;
+    const [rawMap, stateRaw] = Array.isArray(results) ? results : [undefined, undefined];
 
     // Deterministic student leaderboard: score DESC, correctCount DESC,
     // joinedAt ASC, id ASC. Stable tie-breakers guarantee equal-score students
     // never randomly reorder between polls.
     const participants = parseHGetAll(rawMap);
+
+    // Authoritative club totals — computed from the SAME participant records
+    // that drive the winner calculation, so the displayed team score and the
+    // declared winner can never disagree. clubScore keys are only used as the
+    // fast realtime-update path during the live quiz.
+    const teamResults = computeTeamResults(participants);
+    const s = teamResults.results.find((r) => r.club === "STACK_PUSH")?.score ?? 0;
+    const i = teamResults.results.find((r) => r.club === "IT_INNOVATORS")?.score ?? 0;
     const sorted = [...participants].sort(compareParticipants);
     const students = sorted.map((p) => ({
       id: Number(p.id) || 0,
@@ -2819,8 +2978,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       attemptCount: p.attemptCount || 0,
       correctResponseMs: p.correctResponseMs || 0,
       totalResponseMs: p.totalResponseMs || 0,
-      fastestStreak: p.fastestStreak || 0,
-      bonusPoints: p.bonusPoints || 0,
+      basePoints: p.basePoints || 0,
+      speedBonusPoints: p.speedBonusPoints || 0,
       joinedAt: p.joinedAt ?? null,
     }));
     const topStudents = students.slice(0, 3).map((p, idx) => ({ ...p, rank: idx + 1 }));
@@ -2845,6 +3004,9 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       students,
       topStudents,
       fastestTap,
+      // Server-authoritative team standings + winner (eligibility-aware).
+      teamResults: teamResults.results,
+      teamWinner: teamResults.winner,
     });
   });
 
@@ -2898,7 +3060,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         })();
 
         const token = encodeToken({ id, name: n, club: String(club), gen });
-        participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, totalResponseMs: 0, fastestStreak: 0, bonusPoints: 0, joinedAt: new Date().toISOString() };
+        participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, totalResponseMs: 0, basePoints: 0, speedBonusPoints: 0, joinedAt: new Date().toISOString() };
         await saveParticipant(participant, mode);
       } catch (err) {
         // Roll the name claim back so a failed registration can retry.
@@ -2987,8 +3149,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
           attemptCount: 0,
           correctResponseMs: 0,
           totalResponseMs: 0,
-          fastestStreak: 0,
-          bonusPoints: 0,
+          basePoints: 0,
+          speedBonusPoints: 0,
           joinedAt: new Date().toISOString(),
         };
         await saveParticipant(participant, mode);
@@ -3028,7 +3190,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state.status === "COUNTDOWN";
 
     res.json({
-      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, correctResponseMs: participant.correctResponseMs || 0, totalResponseMs: participant.totalResponseMs || 0, fastestStreak: participant.fastestStreak || 0, bonusPoints: participant.bonusPoints || 0, sessionToken: participant.sessionToken },
+      participant: { id: participant.id, name: participant.name, club: participant.club, score: participant.score, correctCount: participant.correctCount, wrongCount: participant.wrongCount || 0, attemptCount: participant.attemptCount, correctResponseMs: participant.correctResponseMs || 0, totalResponseMs: participant.totalResponseMs || 0, basePoints: participant.basePoints || 0, speedBonusPoints: participant.speedBonusPoints || 0, sessionToken: participant.sessionToken },
       hasSubmitted,
       userSubmission:
         hasSubmitted && participant.lastAnswer
@@ -3121,8 +3283,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
             attemptCount: 0,
             correctResponseMs: 0,
             totalResponseMs: 0,
-            fastestStreak: 0,
-            bonusPoints: 0,
+            basePoints: 0,
+            speedBonusPoints: 0,
             joinedAt: new Date().toISOString(),
           };
         }
@@ -3154,22 +3316,23 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       const { isCorrect, pointsAwarded } = evaluateSubmission(a, currentQ.correctAnswer, currentQ.points);
       const responseTimeMs = Math.max(0, now - startedAt);
 
-      const sub = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs, submittedAt: new Date(now).toISOString() };
+      const sub: any = { id: now, participantId: participant.id, participantName: participant.name, club: participant.club, questionId: currentQ.id, questionNumber: currentQ.questionNumber, answer: a, isCorrect, pointsAwarded, responseTimeMs, submittedAt: new Date(now).toISOString(), speedRank: 0, speedBonus: 0 };
 
-      // ── Round-trip 2: atomically save the submission (SET NX) AND record
-      // the fastest correct tap in ONE Lua script — a race or double-tap can
-      // never double-submit, and a rejected duplicate can never touch the
-      // fastest record.
+      // ── Round-trip 2: atomically save the submission (SET NX) AND compute
+      // the server-authoritative fastest-finger rank in ONE Lua script. A race
+      // or double-tap can never double-submit, only one answer can hold each
+      // rank (1st/2nd/3rd), and a rejected duplicate can never touch the
+      // ranking.
       const evalOut = await redisPipeline([
         [
           "EVAL",
           SUBMIT_LUA,
-          "3",
+          "4",
           keys.submission(participant.id, currentQ.id),
+          keys.rank(currentQ.id),
           keys.fastest(currentQ.id),
           keys.fastestLatest,
           JSON.stringify(sub),
-          String(responseTimeMs),
           isCorrect
             ? JSON.stringify({
                 participantId: participant.id,
@@ -3177,6 +3340,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
                 club: participant.club,
                 responseTimeMs,
                 responseTimeSec: (responseTimeMs / 1000).toFixed(2),
+                submittedAt: sub.submittedAt,
                 questionNumber: currentQ.questionNumber,
                 answer: a,
               })
@@ -3186,41 +3350,44 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       if (evalOut === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
       const status2 = Array.isArray(evalOut) ? evalOut[0] : evalOut;
       if (status2 === "DUPLICATE") return res.status(400).json({ error: "Already submitted" });
-      if (status2 !== "OK" && status2 !== "OK_FASTEST") {
+      let speedRank = 0;
+      let speedBonus = 0;
+      if (typeof status2 === "string" && status2.startsWith("{")) {
+        try {
+          const ranked = JSON.parse(status2);
+          if (ranked?.status === "OK") {
+            speedRank = Number(ranked.rank) || 0;
+            speedBonus = Number(ranked.speedBonus) || 0;
+          }
+        } catch (_) {}
+      }
+      if (rankedStatusInvalid(status2)) {
         // The store accepted the submission but returned an unexpected status —
         // fail closed rather than risk double-scoring.
         return res.status(400).json({ error: "Submission failed" });
       }
-      const isFastest = status2 === "OK_FASTEST";
 
-      participant.score = (participant.score || 0) + pointsAwarded;
+      // earnedPoints = basePoints (question.points) + speedBonus. Wrong answers
+      // earn 0 and never receive a speed bonus (speedRank stays 0).
+      const earnedPoints = pointsAwarded + speedBonus;
+      sub.speedRank = speedRank;
+      sub.speedBonus = speedBonus;
+
+      participant.score = (participant.score || 0) + earnedPoints;
+      participant.basePoints = (participant.basePoints || 0) + pointsAwarded;
+      participant.speedBonusPoints = (participant.speedBonusPoints || 0) + speedBonus;
       participant.correctCount = (participant.correctCount || 0) + (isCorrect ? 1 : 0);
       participant.wrongCount = (participant.wrongCount || 0) + (isCorrect ? 0 : 1);
       participant.attemptCount = (participant.attemptCount || 0) + 1;
-      // Winner ranking uses both correctness AND speed: accumulate the total
-      // response time on CORRECT answers so equal scorers are ranked by who
-      // answered correctly fastest (see compareParticipants).
+      // Team tie-break uses BOTH correctness and speed: accumulate the total
+      // response time on CORRECT answers so equal teams/students are ranked by
+      // who answered correctly fastest.
       if (isCorrect) {
         participant.correctResponseMs = (participant.correctResponseMs || 0) + responseTimeMs;
       }
       // Total timing across EVERY submitted answer (correct or not) — powers
       // the final results table's "total time by answer submitted".
       participant.totalResponseMs = (participant.totalResponseMs || 0) + responseTimeMs;
-
-      let bonusAwarded = 0;
-      // 🔥 FASTEST-STREAK BONUS: every 3 questions answered correctly AND
-      // fastest in a row (contiguous) awards FASTEST_STREAK_BONUS extra points.
-      // The streak resets on any wrong answer or when someone else was faster.
-      if (isCorrect) {
-        participant.fastestStreak = isFastest ? (participant.fastestStreak || 0) + 1 : 0;
-        if ((participant.fastestStreak || 0) > 0 && (participant.fastestStreak || 0) % 3 === 0) {
-          bonusAwarded = FASTEST_STREAK_BONUS;
-          participant.bonusPoints = (participant.bonusPoints || 0) + bonusAwarded;
-          participant.score = (participant.score || 0) + bonusAwarded;
-        }
-      } else {
-        participant.fastestStreak = 0;
-      }
 
       // Track the current-question submission on the participant record so the
       // student session poll (hasSubmitted / userSubmission) needs no extra
@@ -3230,12 +3397,17 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       participant.lastSubmittedAt = sub.submittedAt;
 
       // ── Round-trip 3: persist participant + roster + club totals in one
-      // pipelined request.
-      const clubGain = pointsAwarded + bonusAwarded;
+      // pipelined request. The club score is the sum of every participant's
+      // earned points (base + speed bonus) — never double-counted. The stored
+      // submission is re-written with the final speed rank/bonus (the atomic
+      // EVAL saved it before the rank was known) so the admin question
+      // breakdown and result feeds see the exact rank that was awarded.
+      const clubGain = earnedPoints;
       const cmds3: (string | number)[][] = [
         ["SET", keys.participantKey(participant.sessionToken), JSON.stringify(participant), "EX", 86400],
         ["HSET", keys.participantsMap, participant.sessionToken, JSON.stringify(participant)],
         ["SADD", keys.participantTokens, participant.sessionToken],
+        ["SET", keys.submission(participant.id, currentQ.id), JSON.stringify(sub)],
       ];
       if (clubGain > 0) {
         cmds3.push(["INCRBY", keys.clubScore(participant.club), clubGain]);
@@ -3244,7 +3416,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
 
       // Realtime: notify admin/display clients a submission landed (no
       // correctness/points — those stay hidden until reveal) and push the
-      // updated club scores so leaderboards move instantly.
+      // updated club scores so leaderboards move instantly. The speed rank is
+      // included so the admin live feed can show ⚡ FASTEST +3 immediately.
       emitRealtime(mode, "participant:submitted", {
         participantId: participant.id,
         participantName: participant.name,
@@ -3252,6 +3425,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         answer: a,
         questionNumber: currentQ.questionNumber,
         responseTimeMs,
+        speedRank,
+        speedBonus,
       });
       await publishClubScores(mode);
 
@@ -3259,8 +3434,11 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         ok: true,
         submission: sanitizeSubmission(sub),
         participantScore: participant.score,
-        bonusAwarded,
-        fastestStreak: participant.fastestStreak || 0,
+        basePoints: participant.basePoints || 0,
+        speedBonusPoints: participant.speedBonusPoints || 0,
+        speedRank,
+        speedBonus,
+        earnedPoints,
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || "Submission failed" });

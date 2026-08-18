@@ -42,19 +42,19 @@ interface Participant {
   attemptCount: number;
   joinedAt: string;
   correctResponseMs?: number;
-  fastestStreak?: number;
-  bonusPoints?: number;
+  basePoints?: number;
+  speedBonusPoints?: number;
   sessionToken?: string;
 }
 
 // Server-authoritative per-question answer window — mirrors questionDurationSeconds
-// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-40=15s,
-// Q41-50=25s, Q51-70=30s.
+// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-20=15s,
+// Q21-50=45s.
 function durationForQuestion(questionNumber: number, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    if (n >= 1 && n <= 40) return 15;
-    if (n >= 41 && n <= 50) return 25;
+    if (n >= 1 && n <= 20) return 15;
+    if (n >= 21 && n <= 50) return 45;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;
@@ -62,6 +62,10 @@ function durationForQuestion(questionNumber: number, mode: QuizMode = "live"): n
   if (n >= 41 && n <= 80) return 30;
   return 30;
 }
+
+// ⚡ Fastest-finger rank label for the live feed (1st/2nd/3rd fastest correct).
+const speedLabel = (rank?: number): string | null =>
+  rank === 1 ? "⚡ FASTEST" : rank === 2 ? "⚡ 2ND FASTEST" : rank === 3 ? "⚡ 3RD FASTEST" : null;
 
 // Deterministic roster order — score DESC, correct DESC, joinedAt ASC, id ASC.
 // Stable tie-breakers keep the roster from visually shuffling between polls.
@@ -84,8 +88,20 @@ interface Submission {
   answer: string;
   isCorrect: boolean;
   pointsAwarded: number;
+  speedRank?: number;
+  speedBonus?: number;
   responseTimeMs: number;
   submittedAt: string;
+}
+
+interface QuestionBreakdown {
+  questionNumber: number;
+  basePoints: number;
+  correctCount: number;
+  fastest: { participantName: string; responseTimeSec?: string; speedBonus?: number } | null;
+  second: { participantName: string; responseTimeSec?: string; speedBonus?: number } | null;
+  third: { participantName: string; responseTimeSec?: string; speedBonus?: number } | null;
+  otherCorrectCount: number;
 }
 
 interface QuizSession {
@@ -113,6 +129,7 @@ interface AdminSummary {
   currentSubmissions: Submission[];
   answersReceived: number;
   answersPending: number;
+  questionBreakdown?: QuestionBreakdown | null;
 }
 
 export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
@@ -143,6 +160,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [innovatorsParticipants, setInnovatorsParticipants] = useState<Participant[]>([]);
   const [participantsCount, setParticipantsCount] = useState(0);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [questionBreakdown, setQuestionBreakdown] = useState<QuestionBreakdown | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedQuestionNumber, setSelectedQuestionNumber] = useState(1);
   const [roundFilter, setRoundFilter] = useState("all");
@@ -157,6 +175,11 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [questionEndsAt, setQuestionEndsAt] = useState<string | null>(null);
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
   const [durationSeconds, setDurationSeconds] = useState(30);
+
+  // 5s Pre-Question Countdown — server-authoritative countdownEndsAt, shown
+  // to the host so they see the same 5→4→3→2→1→GO the students see.
+  const [countdownEndsAt, setCountdownEndsAt] = useState<string | null>(null);
+  const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
 
   // Realtime connection health + compact event log (terminal aesthetic).
   const [realtimeUp, setRealtimeUp] = useState<boolean>(isRealtimeConnected());
@@ -259,6 +282,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
         setClubs(sumData.clubs || []);
       }
       setQuestionEndsAt(sumData.session?.questionEndsAt || null);
+      setCountdownEndsAt(sumData.session?.countdownEndsAt || null);
       if (sumData.session?.durationSeconds) setDurationSeconds(sumData.session.durationSeconds);
       setPortalOpen((cur) => (cur === (sumData.session?.portalOpen === true) ? cur : sumData.session?.portalOpen === true));
 
@@ -272,6 +296,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
       setInnovatorsParticipants((cur) => (JSON.stringify(cur) === JSON.stringify(nextInnovators) ? cur : nextInnovators));
       setParticipantsCount(sumData.participantsCount || 0);
       setSubmissions((cur) => (JSON.stringify(cur) === JSON.stringify(nextSubmissions) ? cur : nextSubmissions));
+      setQuestionBreakdown(sumData.questionBreakdown ?? null);
     } catch (_) {}
   }, [isAuthenticated]);
   refreshDataRef.current = refreshData;
@@ -380,6 +405,22 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
     const timer = setInterval(updateQTimer, 200);
     return () => clearInterval(timer);
   }, [questionEndsAt, status]);
+
+  // 5s Pre-Question Countdown tick — the host sees the same countdown the
+  // students see, computed from the same authoritative countdownEndsAt.
+  useEffect(() => {
+    if (!countdownEndsAt || status !== "COUNTDOWN") {
+      setCountdownRemaining(null);
+      return;
+    }
+    const updateCountdown = () => {
+      const remainingMs = new Date(countdownEndsAt).getTime() - Date.now();
+      setCountdownRemaining(Math.max(0, Math.ceil(remainingMs / 1000)));
+    };
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 200);
+    return () => clearInterval(timer);
+  }, [countdownEndsAt, status]);
 
   const runHostAction = async (endpoint: string, payload?: any, successMsg?: string) => {
     setActionLoading(true);
@@ -584,7 +625,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "1px" }}>
-              TEST MODE — 70 QUESTIONS · 7 ROUNDS (15s / 25s / 30s) — NOT THE LIVE COLLEGE QUIZ
+              TEST MODE — 50 QUESTIONS · 3 ROUNDS (15s / 45s) — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -595,7 +636,11 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Status</div>
             <div style={{ marginTop: "6px" }}>
               {status === "LIVE" && <span className="badge badge-live"><span className="pulse-dot" /> LIVE {questionRemaining !== null ? `(${questionRemaining}s)` : ""}</span>}
-              {status === "COUNTDOWN" && <span className="badge badge-countdown"><span className="pulse-dot" /> 5s TIMER</span>}
+              {status === "COUNTDOWN" && (
+                <span className="badge badge-countdown">
+                  <span className="pulse-dot" /> {countdownRemaining !== null && countdownRemaining > 0 ? `COUNTDOWN ${countdownRemaining}...` : "5s TIMER"}
+                </span>
+              )}
               {status === "PREPARING" && <span className="badge badge-preparing">PREPARING</span>}
               {status === "WAITING" && <span className="badge badge-waiting">WAITING</span>}
               {status === "LOCKED" && <span className="badge badge-locked">LOCKED</span>}
@@ -861,7 +906,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
               {/* Active Question Preview */}
               {activeQuestion && (
                 <div style={{ background: "rgba(15,23,42,0.7)", borderRadius: "10px", padding: "14px", marginTop: "14px", border: "1px solid var(--border-subtle)" }}>
-                  <div style={{ fontSize: "1.05rem", fontWeight: 700 }}>{activeQuestion.questionText}</div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, whiteSpace: "pre-line" }}>{activeQuestion.questionText}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px", fontSize: "0.85rem" }}>
                     {(["A", "B", "C", "D"] as const).map((key) => (
                       <div
@@ -1041,7 +1086,14 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                           <td>
                             {status === "REVEALED" ? (
                               sub.isCorrect ? (
-                                <span style={{ color: "#4ade80", fontWeight: 800 }}>✓ +{sub.pointsAwarded} pts</span>
+                                <span style={{ color: "#4ade80", fontWeight: 800 }}>
+                                  ✓ +{sub.pointsAwarded} pts
+                                  {(sub.speedBonus || 0) > 0 && (
+                                    <span style={{ color: "#fbbf24", marginLeft: 6 }}>
+                                      {speedLabel(sub.speedRank)} +{sub.speedBonus}
+                                    </span>
+                                  )}
+                                </span>
                               ) : (
                                 <span style={{ color: "#f87171", fontWeight: 700 }}>✕ 0 pts</span>
                               )
@@ -1056,6 +1108,48 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 </div>
               )}
             </div>
+
+            {/* ⚡ QUESTION RESULT BREAKDOWN — the fastest-finger ranking for the
+                current question, shown to the admin after reveal */}
+            {status === "REVEALED" && questionBreakdown && (
+              <div className="glass-card" style={{ marginTop: "18px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                  <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>⚡ Question {questionBreakdown.questionNumber} Result Breakdown</h3>
+                  <span className="badge badge-revealed">FASTEST-FINGER</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "0.92rem" }}>
+                  <div style={{ fontWeight: 800 }}>
+                    Base Points: <span style={{ fontFamily: "var(--font-mono)", color: "#fbbf24" }}>{questionBreakdown.basePoints}</span> per correct answer
+                  </div>
+                  {questionBreakdown.fastest && (
+                    <div>
+                      ⚡ FASTEST — <strong>{questionBreakdown.fastest.participantName}</strong>{" "}
+                      <span style={{ color: "#fbbf24", fontWeight: 800 }}>+{questionBreakdown.fastest.speedBonus ?? 3} speed</span>
+                    </div>
+                  )}
+                  {questionBreakdown.second && (
+                    <div>
+                      ⚡ 2ND FASTEST — <strong>{questionBreakdown.second.participantName}</strong>{" "}
+                      <span style={{ color: "#fb923c", fontWeight: 800 }}>+{questionBreakdown.second.speedBonus ?? 2} speed</span>
+                    </div>
+                  )}
+                  {questionBreakdown.third && (
+                    <div>
+                      ⚡ 3RD FASTEST — <strong>{questionBreakdown.third.participantName}</strong>{" "}
+                      <span style={{ color: "#f59e0b", fontWeight: 800 }}>+{questionBreakdown.third.speedBonus ?? 1} speed</span>
+                    </div>
+                  )}
+                  {questionBreakdown.otherCorrectCount > 0 && (
+                    <div style={{ color: "var(--text-muted)" }}>
+                      OTHER CORRECT — {questionBreakdown.otherCorrectCount} participant{questionBreakdown.otherCorrectCount === 1 ? "" : "s"} · +{questionBreakdown.basePoints} each
+                    </div>
+                  )}
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                    {questionBreakdown.correctCount} correct answer{questionBreakdown.correctCount === 1 ? "" : "s"} total for this question
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* LIVE REGISTERED PARTICIPANTS ROSTER */}
             <div className="glass-card" style={{ marginTop: "18px" }}>
@@ -1094,14 +1188,14 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                           }}
                         >
                           <span style={{ fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
-                          {((p.fastestStreak || 0) >= 3 || (p.bonusPoints || 0) > 0) && (
+                          {(p.basePoints || 0) > 0 || (p.speedBonusPoints || 0) > 0 ? (
                             <span
-                              title={`${p.fastestStreak || 0}-fastest streak · ${p.bonusPoints || 0} bonus pts`}
-                              style={{ fontSize: "0.8rem", fontWeight: 900, color: "#fb923c", flexShrink: 0 }}
+                              title={`Base ${p.basePoints || 0} · Speed +${p.speedBonusPoints || 0}`}
+                              style={{ fontSize: "0.72rem", fontWeight: 800, color: "#fb923c", flexShrink: 0 }}
                             >
-                              🔥{(p.bonusPoints || 0) > 0 ? `+${p.bonusPoints}` : ""}
+                              BASE {p.basePoints || 0} · ⚡+{p.speedBonusPoints || 0}
                             </span>
-                          )}
+                          ) : null}
                           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>{p.score} pts</span>
                           {p.sessionToken && (
                             <button
@@ -1152,14 +1246,14 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                           }}
                         >
                           <span style={{ fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
-                          {((p.fastestStreak || 0) >= 3 || (p.bonusPoints || 0) > 0) && (
+                          {(p.basePoints || 0) > 0 || (p.speedBonusPoints || 0) > 0 ? (
                             <span
-                              title={`${p.fastestStreak || 0}-fastest streak · ${p.bonusPoints || 0} bonus pts`}
-                              style={{ fontSize: "0.8rem", fontWeight: 900, color: "#fb923c", flexShrink: 0 }}
+                              title={`Base ${p.basePoints || 0} · Speed +${p.speedBonusPoints || 0}`}
+                              style={{ fontSize: "0.72rem", fontWeight: 800, color: "#fb923c", flexShrink: 0 }}
                             >
-                              🔥{(p.bonusPoints || 0) > 0 ? `+${p.bonusPoints}` : ""}
+                              BASE {p.basePoints || 0} · ⚡+{p.speedBonusPoints || 0}
                             </span>
-                          )}
+                          ) : null}
                           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>{p.score} pts</span>
                           {p.sessionToken && (
                             <button
@@ -1190,7 +1284,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="glass-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Question Browser</h3>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "70 Questions · 15s/25s/30s" : "100 Questions"}</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "50 Questions · 15s/45s" : "100 Questions"}</span>
               </div>
 
               <div className="round-filter-tabs">

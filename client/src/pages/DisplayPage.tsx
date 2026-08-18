@@ -56,16 +56,31 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [clubScores, setClubScores] = useState({ STACK_PUSH: 0, IT_INNOVATORS: 0 });
   const [topStudents, setTopStudents] = useState<TopStudent[]>([]);
   const [fastestTap, setFastestTap] = useState<FastestTap | null>(null);
+  // 🏆 Server-authoritative team winner + standings (see computeTeamResults).
+  const [teamWinner, setTeamWinner] = useState<string | null>(null);
+  const [teamResults, setTeamResults] = useState<Array<{
+    club: string;
+    score: number;
+    basePoints: number;
+    speedBonus: number;
+    correctAnswers: number;
+    totalCorrectResponseMs: number;
+    requiredMembers: number;
+    contributedMembers: number;
+    eligible: boolean;
+  }>>([]);
 
   // Realtime sync — one event-driven path. The socket pushes every state
   // change (applied locally, zero Redis cost); REST is used only for the
   // initial sync, reconnect recovery, and the slow disconnected fallback.
+  // While COUNTDOWN runs, the fallback polls every 1s so the 5-second
+  // countdown can never be skipped past on the REST-only path.
   useRealtime({
     mode,
     resync: () => {
       void syncState();
     },
-    pollMs: 30000,
+    pollMs: status === "COUNTDOWN" ? 1000 : 30000,
     onState: (payload) => applyRealtimeState(payload),
     onLeaderboard: (payload) => {
       if (payload.clubs) {
@@ -76,6 +91,8 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
       }
       if (payload.topStudents) setTopStudents(payload.topStudents);
       if (payload.fastestTap !== undefined) setFastestTap(payload.fastestTap as FastestTap);
+      if ((payload as any).teamResults) setTeamResults((payload as any).teamResults);
+      if ((payload as any).teamWinner !== undefined) setTeamWinner((payload as any).teamWinner);
     },
     onReveal: (payload) => {
       if (payload.correctAnswer) setCorrectAnswer(payload.correctAnswer);
@@ -91,7 +108,14 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
     if (session) {
       setStatus(session.status ?? "WAITING");
       setCorrectAnswer(session.correctAnswer ?? null);
-      setCountdownEndsAt(session.countdownEndsAt ?? null);
+      // Stale/past countdown protection: a countdown whose authoritative
+      // deadline has passed (stale event / late reconnect) never starts a
+      // fresh 5→4→3→2→1 — the server has already moved on to LIVE.
+      if (session.countdownEndsAt && new Date(session.countdownEndsAt).getTime() <= Date.now()) {
+        setCountdownEndsAt(null);
+      } else {
+        setCountdownEndsAt(session.countdownEndsAt ?? null);
+      }
       setQuestionEndsAt(session.questionEndsAt ?? null);
       if (session.durationSeconds) setDurationSeconds(session.durationSeconds);
     }
@@ -128,6 +152,18 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           clubs: Array<{ name: string; score: number }>;
           topStudents?: TopStudent[];
           fastestTap?: FastestTap | null;
+          teamResults?: Array<{
+            club: string;
+            score: number;
+            basePoints: number;
+            speedBonus: number;
+            correctAnswers: number;
+            totalCorrectResponseMs: number;
+            requiredMembers: number;
+            contributedMembers: number;
+            eligible: boolean;
+          }>;
+          teamWinner?: string | null;
         }>("/api/leaderboard", undefined, mode),
       ]);
       applyRealtimeState({
@@ -142,6 +178,8 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
       }
       if (leaderboardData.topStudents) setTopStudents(leaderboardData.topStudents);
       if (leaderboardData.fastestTap !== undefined) setFastestTap(leaderboardData.fastestTap);
+      if (leaderboardData.teamResults) setTeamResults(leaderboardData.teamResults);
+      if (leaderboardData.teamWinner !== undefined) setTeamWinner(leaderboardData.teamWinner);
     } catch (_) {}
   };
 
@@ -224,7 +262,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   color: mode === "test" ? "#030712" : undefined,
                 }}
               >
-                {mode === "test" ? "TEST MODE — 70 QUESTIONS" : "IT CLUB BATTLE"}
+                {mode === "test" ? "TEST MODE — 50 QUESTIONS" : "IT CLUB BATTLE"}
               </span>
               <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#e2e8f0" }}>
                 {question?.roundName || "Round 1"}
@@ -270,7 +308,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               )}
 
               <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
-                QUESTION {question.questionNumber} OF {mode === "test" ? 70 : 100}
+                QUESTION {question.questionNumber} OF {mode === "test" ? 50 : 100}
               </div>
               <QuestionText className="projector-question-text" text={question.questionText} />
 
@@ -325,12 +363,18 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                 Winner declared — congratulations to all champions!
               </p>
 
-              {/* Champion club banner */}
+              {/* Champion club banner — server-authoritative: the eligible
+                  team with the highest score (see computeTeamResults), never a
+                  local score comparison. */}
               {(() => {
-                const stack = clubScores.STACK_PUSH;
-                const innov = clubScores.IT_INNOVATORS;
-                const champion = stack > innov ? "STACK_PUSH" : innov > stack ? "IT_INNOVATORS" : null;
+                const champion = teamWinner;
                 const championColor = champion === "STACK_PUSH" ? "#60a5fa" : "#34d399";
+                const championTitle =
+                  champion === "TIE"
+                    ? "MATCH TIED — TEAM TIE!"
+                    : champion
+                      ? `${champion === "STACK_PUSH" ? "STACK.PUSH" : "IT INNOVATORS"} — CHAMPION!`
+                      : "NO ELIGIBLE TEAM — every club member must contribute";
                 return (
                   <div
                     style={{
@@ -338,21 +382,35 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                       marginTop: "22px",
                       padding: "16px 44px",
                       borderRadius: "18px",
-                      border: `3px solid ${champion ? championColor : "#fbbf24"}`,
-                      background: champion ? `${championColor}1f` : "rgba(251, 191, 36, 0.12)",
+                      border: `3px solid ${champion && champion !== "TIE" ? championColor : "#fbbf24"}`,
+                      background: champion && champion !== "TIE" ? `${championColor}1f` : "rgba(251, 191, 36, 0.12)",
                     }}
                   >
                     <div style={{ fontSize: "3rem", lineHeight: 1 }}>
                       {champion === "STACK_PUSH" ? "⚡" : champion === "IT_INNOVATORS" ? "🚀" : "🤝"}
                     </div>
-                    <div style={{ fontSize: "2rem", fontWeight: 900, color: champion ? championColor : "#fbbf24", marginTop: "4px" }}>
-                      {champion
-                        ? `${champion === "STACK_PUSH" ? "STACK.PUSH" : "IT INNOVATORS"} — CHAMPION!`
-                        : "MATCH TIED!"}
+                    <div style={{ fontSize: "2rem", fontWeight: 900, color: champion && champion !== "TIE" ? championColor : "#fbbf24", marginTop: "4px" }}>
+                      {championTitle}
                     </div>
                     <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "#e2e8f0", marginTop: "6px" }}>
-                      ⚡ Stack.push {stack} pts &nbsp;vs&nbsp; 🚀 IT Innovators {innov} pts
+                      ⚡ Stack.push {clubScores.STACK_PUSH} pts &nbsp;vs&nbsp; 🚀 IT Innovators {clubScores.IT_INNOVATORS} pts
                     </div>
+                    {teamResults.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "12px", fontSize: "0.95rem", fontWeight: 700 }}>
+                        {teamResults.map((t) => (
+                          <div key={t.club} style={{ display: "flex", justifyContent: "center", gap: "14px" }}>
+                            <span style={{ color: t.club === "STACK_PUSH" ? "#60a5fa" : "#34d399" }}>
+                              {t.club === "STACK_PUSH" ? "⚡ STACK.PUSH" : "🚀 IT INNOVATORS"}
+                            </span>
+                            <span style={{ color: "#cbd5e1" }}>BASE {t.basePoints}</span>
+                            <span style={{ color: "#fbbf24" }}>SPEED +{t.speedBonus}</span>
+                            <span style={{ color: t.eligible ? "#4ade80" : "#f87171" }}>
+                              {t.contributedMembers}/{t.requiredMembers} · {t.eligible ? "ELIGIBLE" : "INELIGIBLE"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -499,10 +557,10 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
             </div>
           </div>
 
-          {/* ⚡ FASTEST TAP — speed counts toward the winner ranking */}
+          {/* ⚡ FASTEST-FINGER — speed counts toward the winner ranking */}
           <div className="glass-card" style={{ padding: "10px 16px", textAlign: "center", border: "1.5px solid rgba(251, 191, 36, 0.3)" }}>
             <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.5px" }}>
-              Winner Ranking = Correct Answers + Speed · 3 Fastest in a Row = Bonus
+              Scoring = Base Points + Speed Bonus · 1st/2nd/3rd fastest correct = +3/+2/+1 · Team wins only when every member contributes
             </div>
           </div>
 

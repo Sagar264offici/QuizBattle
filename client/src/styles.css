@@ -514,6 +514,8 @@ button, input, select {
   font-weight: 700;
   line-height: 1.45;
   color: #ffffff;
+  /* Preserve intentional line breaks in question text */
+  white-space: pre-line;
 }
 
 /* Code blocks inside questions — flat terminal look */
@@ -651,6 +653,8 @@ button, input, select {
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.4;
+  /* Pattern options (Java pattern-printing round) keep their shape */
+  white-space: pre-line;
 }
 
 /* Status Cards */
@@ -905,6 +909,8 @@ button, input, select {
   line-height: 1.35;
   margin: 20px 0 28px 0;
   color: #ffffff;
+  /* Preserve intentional line breaks in question text */
+  white-space: pre-line;
 }
 
 .projector-options-grid {
@@ -924,6 +930,8 @@ button, input, select {
   font-size: 1.4rem;
   font-weight: 700;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  /* Pattern options keep their shape */
+  white-space: pre-line;
 }
 
 .projector-option-box.correct {
@@ -1533,7 +1541,7 @@ button, input, select {
   80% { transform: translateX(calc(-50% + 4px)); }
 }
 
-/* FASTEST-STREAK BONUS toast */
+/* ⚡ Fastest-finger speed-bonus toast */
 .bonus-toast {
   position: fixed;
   top: 14px;

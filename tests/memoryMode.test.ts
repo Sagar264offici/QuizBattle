@@ -79,8 +79,14 @@ describe("memory-mode quiz flow", () => {
     expect(summary.participantsCount).toBe(2);
     const alice = summary.participants.find((p: any) => p.sessionToken === t1);
     const bob = summary.participants.find((p: any) => p.sessionToken === t2);
-    expect(alice.score).toBe(1);
-    expect(bob.score).toBe(1);
+    // Alice answered correctly FIRST (1 base + 3 speed = 4); Bob was the
+    // SECOND correct answer (1 base + 2 speed = 3).
+    expect(alice.score).toBe(4);
+    expect(alice.basePoints).toBe(1);
+    expect(alice.speedBonusPoints).toBe(3);
+    expect(bob.score).toBe(3);
+    expect(bob.basePoints).toBe(1);
+    expect(bob.speedBonusPoints).toBe(2);
     expect(summary.answersReceived).toBe(2);
     expect(summary.currentSubmissions).toHaveLength(2);
 
@@ -110,30 +116,47 @@ describe("memory-mode quiz flow", () => {
     const s = createMemoryStore();
     const sub = (pid: number, ms: number) =>
       JSON.stringify({ id: Date.now() + pid, participantId: pid, responseTimeMs: ms });
-    const detail = (pid: number, ms: number) => JSON.stringify({ participantId: pid, responseTimeMs: ms });
-    const evalCmd = (pid: number, ms: number) => [
+    const detail = (pid: number, ms: number) =>
+      JSON.stringify({ participantId: pid, participantName: `P${pid}`, responseTimeMs: ms, submittedAt: new Date(1000 + ms).toISOString() });
+    const evalCmd = (pid: number, ms: number, correct = true) => [
       "EVAL",
       "ignored",
-      "3",
+      "4",
       `sub:${pid}:1`,
+      `rank:1`,
       `fastest:1`,
       "fastest:latest",
       sub(pid, ms),
-      String(ms),
-      detail(pid, ms),
+      correct ? detail(pid, ms) : "",
     ];
+    const rankOf = (pid: number) => {
+      const list = JSON.parse(s.command(["GET", "rank:1"]) as string);
+      return list.find((e: any) => e.participantId === pid);
+    };
 
-    // First correct answer is fastest.
-    expect(s.command(evalCmd(1, 100))).toBe("OK_FASTEST");
-    // Slower correct answer is accepted but not fastest.
-    expect(s.command(evalCmd(2, 200))).toBe("OK");
-    // Duplicate submission is rejected and never touches the fastest record.
+    // First correct answer → rank 1, +3 speed bonus.
+    expect(JSON.parse(s.command(evalCmd(1, 100)) as string)).toEqual({ status: "OK", rank: 1, speedBonus: 3 });
+    // Second correct answer → rank 2, +2 speed bonus.
+    expect(JSON.parse(s.command(evalCmd(2, 200)) as string)).toEqual({ status: "OK", rank: 2, speedBonus: 2 });
+    // Third correct answer → rank 3, +1 speed bonus.
+    expect(JSON.parse(s.command(evalCmd(3, 300)) as string)).toEqual({ status: "OK", rank: 3, speedBonus: 1 });
+    // Fourth correct answer → rank 4, +0 speed bonus.
+    expect(JSON.parse(s.command(evalCmd(4, 400)) as string)).toEqual({ status: "OK", rank: 4, speedBonus: 0 });
+    // Wrong answer → rank 0, no speed bonus, never touches the ranking.
+    expect(JSON.parse(s.command(evalCmd(5, 10, false)) as string)).toEqual({ status: "OK", rank: 0, speedBonus: 0 });
+    // Duplicate submission is rejected and never touches the ranking.
     expect(s.command(evalCmd(1, 50))).toBe("DUPLICATE");
-    expect(s.command(["GET", "fastest:1"])).toBe(detail(1, 100));
-    // A genuinely faster NEW student overwrites the fastest record.
-    expect(s.command(evalCmd(3, 75))).toBe("OK_FASTEST");
-    expect(s.command(["GET", "fastest:1"])).toBe(detail(3, 75));
-    expect(s.command(["GET", "fastest:latest"])).toBe(detail(3, 75));
+
+    // The rank list is deterministically ordered and immutable per question.
+    const list = JSON.parse(s.command(["GET", "rank:1"]) as string);
+    expect(list.map((e: any) => e.participantId)).toEqual([1, 2, 3, 4]);
+    expect(list.map((e: any) => e.rank)).toEqual([1, 2, 3, 4]);
+    expect(rankOf(1).speedBonus).toBe(3);
+    expect(rankOf(4).speedBonus).toBe(0);
+
+    // Fastest-tap display records always mirror rank 1.
+    expect(JSON.parse(s.command(["GET", "fastest:1"]) as string).participantId).toBe(1);
+    expect(JSON.parse(s.command(["GET", "fastest:latest"]) as string).participantId).toBe(1);
 
     // Pipeline applies commands in order.
     const res = s.pipeline([["SET", "k", "v"], ["GET", "k"], ["SISMEMBER", "set:missing", "x"]]);

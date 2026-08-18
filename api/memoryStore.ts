@@ -49,42 +49,60 @@ export function createMemoryStore(): MemoryStore {
 
   /**
    * Runs the app's SUBMIT_LUA script (the only EVAL the API issues):
-   *   EVAL script numkeys KEYS[1]=submission KEYS[2]=fastest KEYS[3]=fastestLatest
-   *        ARGV[1]=submission JSON ARGV[2]=responseTimeMs ARGV[3]=fastest detail JSON
-   * Returns "DUPLICATE" | "OK" | "OK_FASTEST".
+   *   EVAL script numkeys
+   *        KEYS[1]=submission KEYS[2]=rank-list KEYS[3]=fastest KEYS[4]=fastestLatest
+   *        ARGV[1]=submission JSON ARGV[2]=rank-detail JSON ("" for wrong answers)
+   * Returns "DUPLICATE" or a JSON string { status, rank, speedBonus }.
    */
   function runSubmitEval(cmd: (string | number)[]): string {
     const numKeys = Number(cmd[2]) || 0;
     const keys = cmd.slice(3, 3 + numKeys).map(String);
     const args = cmd.slice(3 + numKeys).map(String);
-    const [subKey, fastestKey, fastestLatestKey] = keys;
-    const [subJson, responseTimeMsStr, detailJson] = args;
+    const [subKey, rankKey, fastestKey, fastestLatestKey] = keys;
+    const [subJson, detailJson] = args;
 
     // SET KEYS[1] ARGV[1] EX 86400 NX — reject duplicates, never touch the
-    // fastest record on a duplicate.
+    // ranking/fastest records on a duplicate.
     if (!setEntry(subKey, { kind: "string", value: subJson, expiresAt: null }, 86400, true)) {
       return "DUPLICATE";
     }
 
-    if (detailJson !== "") {
-      let curTime: number | null = null;
-      const cur = getEntry(fastestKey);
-      if (cur && cur.kind === "string") {
-        try {
-          const obj = JSON.parse(cur.value);
-          if (obj && typeof obj.responseTimeMs === "number") curTime = obj.responseTimeMs;
-        } catch {
-          curTime = null;
-        }
-      }
-      const newTime = Number(responseTimeMsStr);
-      if (curTime === null || newTime < curTime) {
-        setEntry(fastestKey, { kind: "string", value: detailJson, expiresAt: null }, 86400);
-        setEntry(fastestLatestKey, { kind: "string", value: detailJson, expiresAt: null }, 86400);
-        return "OK_FASTEST";
+    if (detailJson === "") {
+      // Wrong answer: no speed ranking, no fastest-tap update.
+      return JSON.stringify({ status: "OK", rank: 0, speedBonus: 0 });
+    }
+
+    // Correct answer: insert into the deterministic per-question ranking
+    // ordered by (responseTimeMs ASC, submittedAt ASC, participantId ASC).
+    let list: any[] = [];
+    const cur = getEntry(rankKey);
+    if (cur && cur.kind === "string") {
+      try {
+        const parsed = JSON.parse(cur.value);
+        if (Array.isArray(parsed)) list = parsed;
+      } catch {
+        list = [];
       }
     }
-    return "OK";
+    const entry = JSON.parse(detailJson);
+    const cmp = (a: any, b: any) => {
+      const t = Number(a.responseTimeMs) - Number(b.responseTimeMs);
+      if (t !== 0) return t;
+      const ts = String(a.submittedAt || "").localeCompare(String(b.submittedAt || ""));
+      if (ts !== 0) return ts;
+      return Number(a.participantId) - Number(b.participantId);
+    };
+    list.push(entry);
+    list.sort(cmp);
+    list.forEach((e, i) => {
+      e.rank = i + 1;
+      e.speedBonus = i === 0 ? 3 : i === 1 ? 2 : i === 2 ? 1 : 0;
+    });
+    setEntry(rankKey, { kind: "string", value: JSON.stringify(list), expiresAt: null }, 86400);
+    const fastest = list[0];
+    setEntry(fastestKey, { kind: "string", value: JSON.stringify(fastest), expiresAt: null }, 86400);
+    setEntry(fastestLatestKey, { kind: "string", value: JSON.stringify(fastest), expiresAt: null }, 86400);
+    return JSON.stringify({ status: "OK", rank: entry.rank, speedBonus: entry.speedBonus });
   }
 
   function command(cmd: (string | number)[]): any {

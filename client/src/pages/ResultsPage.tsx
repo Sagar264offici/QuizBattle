@@ -20,9 +20,21 @@ interface ResultStudent {
   attemptCount: number;
   correctResponseMs: number;
   totalResponseMs: number;
-  fastestStreak: number;
-  bonusPoints: number;
+  basePoints: number;
+  speedBonusPoints: number;
   joinedAt: string | null;
+}
+
+interface TeamResult {
+  club: string;
+  score: number;
+  basePoints: number;
+  speedBonus: number;
+  correctAnswers: number;
+  totalCorrectResponseMs: number;
+  requiredMembers: number;
+  contributedMembers: number;
+  eligible: boolean;
 }
 
 interface LeaderboardData {
@@ -37,6 +49,8 @@ interface LeaderboardData {
     questionNumber: number;
     answer: string;
   } | null;
+  teamResults?: TeamResult[];
+  teamWinner?: string | null;
 }
 
 const clubLabel = (c: string) => (c === "STACK_PUSH" ? "Stack.push" : "IT Innovators");
@@ -125,6 +139,9 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
   const stackScore = data?.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0;
   const innovScore = data?.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0;
   const fastestTap = data?.fastestTap ?? null;
+  // Server-authoritative team standings + winner (see computeTeamResults).
+  const teamResults = data?.teamResults ?? [];
+  const teamWinner = data?.teamWinner ?? null;
 
   const toCertificate = (s: ResultStudent, rank: 1 | 2 | 3): CertificateStudent => ({
     name: s.name,
@@ -141,7 +158,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
       mode,
       eventName:
         mode === "test"
-          ? "IT Club Championship — TEST MODE · 70 Questions"
+          ? "IT Club Championship — TEST MODE · 50 Questions"
           : "IT Club Championship — Technical Battle",
     });
   };
@@ -268,6 +285,84 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
           </div>
         </div>
 
+        {/* 🏆 TEAM CHAMPION — server-authoritative eligible-team winner with
+            the full score breakdown (base + speed + participation). */}
+        <div className="glass-card" style={{ marginBottom: "18px" }}>
+          <div style={{ textAlign: "center", padding: "6px 0 14px" }}>
+            {teamWinner ? (
+              <div>
+                <div style={{ fontSize: "2.6rem", lineHeight: 1 }}>
+                  {teamWinner === "STACK_PUSH" ? "⚡" : teamWinner === "IT_INNOVATORS" ? "🚀" : "🤝"}
+                </div>
+                <div
+                  style={{
+                    fontSize: "1.5rem",
+                    fontWeight: 900,
+                    marginTop: "6px",
+                    color: teamWinner === "TIE" ? "#fbbf24" : clubColor(teamWinner),
+                  }}
+                >
+                  {teamWinner === "TIE"
+                    ? "TEAM TIE — both clubs finished exactly equal!"
+                    : `${clubLabel(teamWinner).toUpperCase()} — TEAM CHAMPION!`}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#fbbf24" }}>
+                No eligible team — every club member must contribute at least once to win.
+              </div>
+            )}
+          </div>
+
+          {teamResults.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px" }}>
+              {teamResults.map((t) => (
+                <div
+                  key={t.club}
+                  style={{
+                    padding: "16px 18px",
+                    borderRadius: "14px",
+                    background: "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${t.club === "STACK_PUSH" ? "rgba(59, 130, 246, 0.4)" : "rgba(16, 185, 129, 0.4)"}`,
+                  }}
+                >
+                  <div style={{ fontSize: "1.05rem", fontWeight: 900, color: t.club === "STACK_PUSH" ? "#60a5fa" : "#34d399" }}>
+                    {t.club === "STACK_PUSH" ? "⚡ STACK.PUSH" : "🚀 IT INNOVATORS"}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "10px", fontSize: "0.95rem", fontWeight: 800 }}>
+                    <span style={{ color: "var(--text-muted)" }}>TEAM SCORE</span>
+                    <span style={{ fontFamily: "var(--font-mono)", color: "#fbbf24" }}>{t.score}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.85rem", fontWeight: 700 }}>
+                    <span style={{ color: "var(--text-muted)" }}>BASE POINTS</span>
+                    <span style={{ fontFamily: "var(--font-mono)", color: "#e2e8f0" }}>{t.basePoints}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.85rem", fontWeight: 700 }}>
+                    <span style={{ color: "var(--text-muted)" }}>SPEED BONUS</span>
+                    <span style={{ fontFamily: "var(--font-mono)", color: "#fb923c" }}>+{t.speedBonus}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.85rem", fontWeight: 700 }}>
+                    <span style={{ color: "var(--text-muted)" }}>CORRECT ANSWERS</span>
+                    <span style={{ fontFamily: "var(--font-mono)", color: "#4ade80" }}>{t.correctAnswers}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.85rem", fontWeight: 700 }}>
+                    <span style={{ color: "var(--text-muted)" }}>CONTRIBUTORS</span>
+                    <span style={{ fontFamily: "var(--font-mono)", color: "#e2e8f0" }}>{t.contributedMembers} / {t.requiredMembers}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "0.85rem", fontWeight: 900 }}>
+                    <span style={{ color: "var(--text-muted)" }}>STATUS</span>
+                    <span style={{ color: t.eligible ? "#4ade80" : "#f87171" }}>{t.eligible ? "ELIGIBLE" : "INELIGIBLE"}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "8px 0 14px" }}>
+              No team results yet — students need to join and answer questions first.
+            </div>
+          )}
+        </div>
+
         {fastestTap && (
           <div className="glass-card" style={{ marginBottom: "18px", padding: "14px 18px", border: "1.5px solid rgba(251, 191, 36, 0.35)" }}>
             <div style={{ fontSize: "0.75rem", color: "#fbbf24", textTransform: "uppercase", fontWeight: 800, letterSpacing: "1px", marginBottom: "4px" }}>
@@ -323,11 +418,11 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                       <span>✓ {s.correctCount} correct</span>
                       <span>⏱ {formatDuration(s.totalResponseMs)} total</span>
                     </div>
-                    {(s.bonusPoints || 0) > 0 && (
+                    {(s.basePoints || 0) > 0 || (s.speedBonusPoints || 0) > 0 ? (
                       <div style={{ marginTop: "6px", fontSize: "0.8rem", fontWeight: 800, color: "#fb923c" }}>
-                        🔥 +{s.bonusPoints} bonus · {s.fastestStreak}-fastest streak
+                        BASE {s.basePoints || 0} · ⚡ SPEED +{s.speedBonusPoints || 0}
                       </div>
-                    )}
+                    ) : null}
                     <button
                       className="btn btn-warning btn-sm"
                       style={{ marginTop: "14px", width: "100%", fontWeight: 900 }}
@@ -380,12 +475,14 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                     <th>Name</th>
                     <th>Club</th>
                     <th>Score</th>
+                    <th>Base</th>
+                    <th>Speed ⚡</th>
                     <th>Correct</th>
                     <th>Wrong</th>
                     <th>Submissions</th>
+                    <th>Contribution</th>
                     <th>Total Time (All Answers)</th>
                     <th>Avg Time / Answer</th>
-                    <th>Bonus 🔥</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -399,15 +496,19 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                         <span style={{ fontSize: "0.8rem", fontWeight: 800, color: clubColor(s.club) }}>{clubLabel(s.club)}</span>
                       </td>
                       <td style={{ fontWeight: 900, color: "#fbbf24", fontFamily: "var(--font-mono)" }}>{s.score}</td>
+                      <td style={{ fontFamily: "var(--font-mono)", color: "#e2e8f0" }}>{s.basePoints || 0}</td>
+                      <td style={{ color: (s.speedBonusPoints || 0) > 0 ? "#fb923c" : "var(--text-dim)", fontWeight: 800, fontFamily: "var(--font-mono)" }}>
+                        {(s.speedBonusPoints || 0) > 0 ? `+${s.speedBonusPoints}` : "—"}
+                      </td>
                       <td style={{ color: "#4ade80", fontFamily: "var(--font-mono)" }}>{s.correctCount}</td>
                       <td style={{ color: "#f87171", fontFamily: "var(--font-mono)" }}>{s.wrongCount || 0}</td>
                       <td style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{s.attemptCount || 0}</td>
+                      <td style={{ fontFamily: "var(--font-mono)", color: (s.attemptCount || 0) > 0 ? "#4ade80" : "var(--text-dim)" }}>
+                        {(s.attemptCount || 0) > 0 ? "✓" : "—"}
+                      </td>
                       <td style={{ fontFamily: "var(--font-mono)" }}>⏱ {formatDuration(s.totalResponseMs)}</td>
                       <td style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
                         {s.attemptCount ? formatDuration(s.totalResponseMs / s.attemptCount) : "—"}
-                      </td>
-                      <td style={{ color: (s.bonusPoints || 0) > 0 ? "#fb923c" : "var(--text-dim)", fontWeight: 800 }}>
-                        {(s.bonusPoints || 0) > 0 ? `+${s.bonusPoints}` : "—"}
                       </td>
                     </tr>
                   ))}

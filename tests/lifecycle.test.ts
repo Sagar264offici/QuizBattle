@@ -126,6 +126,13 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
     expect(poll.currentQuestion).not.toBeNull();
     expect(poll.currentQuestion.questionNumber).toBe(1);
     expect(poll.currentQuestion.correctAnswer).toBeUndefined();
+    // The student poll carries the authoritative countdown deadline so every
+    // client renders 5→4→3→2→1→GO from the SAME server timestamp (no local
+    // clocks, no per-second Redis traffic).
+    expect(poll.countdownEndsAt).toBeTruthy();
+    // The answer window has NOT started during the countdown — the fastest-
+    // finger response timer begins only when the question goes LIVE (after GO).
+    expect(poll.questionEndsAt).toBeTruthy();
 
     // Advance the server clock past countdownEndsAt: the next state read
     // auto-transitions COUNTDOWN -> LIVE (server-authoritative).
@@ -135,16 +142,22 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
       const live = await (await api("/quiz-state")).json();
       expect(live.session.status).toBe("LIVE");
       expect(live.currentQuestion.questionNumber).toBe(1);
+      // questionStartedAt is stamped exactly at the COUNTDOWN→LIVE transition:
+      // responseTimeMs is measured from this instant, never from the countdown.
+      expect(live.session.questionStartedAt).toBeTruthy();
+      expect(new Date(live.session.questionEndsAt).getTime()).toBeGreaterThan(endsAt);
     } finally {
       vi.useRealTimers();
     }
 
-    // A student poll now receives Q1.
+    // A student poll now receives Q1 — countdown is over, the answer window is
+    // live and the (cleared) countdown is never replayed.
     const poll2 = await (
       await api(`/participants/session?token=${encodeURIComponent(reg.data.participant.sessionToken)}`)
     ).json();
     expect(poll2.sessionStatus).toBe("LIVE");
     expect(poll2.currentQuestion.questionNumber).toBe(1);
+    expect(poll2.countdownEndsAt).toBeNull();
   });
 
   // ── Invalid transitions are rejected server-side ───────────────────────────
@@ -198,7 +211,8 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
     await api("/admin/reveal-answer", { method: "POST", headers: adminHeaders, body: "{}" });
 
     const clubBefore = (await (await api("/leaderboard")).json()).clubs.find((c: any) => c.name === "STACK_PUSH").score;
-    expect(clubBefore).toBe(2 * QUESTIONS[0].points);
+    // Alice answered first (1 base + 3 speed = 4), Bob second (1 base + 2 speed = 3).
+    expect(clubBefore).toBe(4 + 3);
 
     // Kick Alice only.
     const kick = await api("/admin/kick-participant", {
@@ -240,9 +254,11 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
     expect(summaryData.participantsCount).toBe(1);
     expect(summaryData.participants[0].name).toBe("Bob Safe");
 
-    // Club total is NOT reset by the individual kick.
+    // Club totals derive from the authoritative participant records, so the
+    // kicked student's contribution leaves the club total (displayed totals and
+    // the winner calculation can never disagree). Bob's contribution remains.
     const clubAfter = (await (await api("/leaderboard")).json()).clubs.find((c: any) => c.name === "STACK_PUSH").score;
-    expect(clubAfter).toBe(clubBefore);
+    expect(clubAfter).toBe(QUESTIONS[0].points + 2);
 
     // Quiz state is untouched: still on Q2 as the host set it.
     expect(summaryData.currentQuestionId).toBe(2);
@@ -389,6 +405,7 @@ describe("New event lifecycle, kick, members, deterministic ordering", () => {
     await api("/test/admin/reveal-answer", { method: "POST", headers: adminHeaders, body: "{}" });
     const lb = await (await api("/test/leaderboard")).json();
     const total = lb.clubs.reduce((s: number, c: any) => s + c.score, 0);
-    expect(total).toBe(2 * q1.points);
+    // T1 answered correctly FIRST (base + 3 speed), T2 SECOND (base + 2 speed), T3 wrong (0).
+    expect(total).toBe(q1.points + 3 + q1.points + 2);
   });
 });

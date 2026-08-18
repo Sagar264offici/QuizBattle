@@ -3,11 +3,12 @@ import React from "react";
 /**
  * Renders question text with proper code formatting.
  *
- * Detects "Guess The Output"-style questions — the prompt line followed by
- * code on the next lines ("What is the output?\n…", "What will be the
- * output?\n…", "How many times does the following loop print?\n…") — and
- * renders the code part in a styled <pre> block. Everything else renders as
- * plain text.
+ * Any question whose FIRST line ends with a "?" (e.g. "What is the output?",
+ * "What happens here?", "What pattern is produced?", "In C++, what is the
+ * output?", "What does this function return?", "What is printed?") followed by
+ * content on the next lines is treated as a prompt + code block — the code is
+ * rendered in a styled <pre> so line breaks, indentation and pattern shapes are
+ * preserved. Everything else renders as plain text.
  */
 export default function QuestionText({
   text,
@@ -18,10 +19,8 @@ export default function QuestionText({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  // Prompt line + code (everything after the first line break).
-  const codeMatch = text.match(
-    /^(What (?:is|will be) the output\??\s*\n|How many times does the following loop print\??\s*\n)([\s\S]+)$/i,
-  );
+  // Prompt (first line ending with "?") + code (everything after it).
+  const codeMatch = text.match(/^([^\n]*\?\s*\n)([\s\S]+)$/);
 
   if (codeMatch) {
     const [, prompt, code] = codeMatch;

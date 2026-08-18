@@ -15,9 +15,21 @@ interface Participant {
   club: "STACK_PUSH" | "IT_INNOVATORS";
   score: number;
   sessionToken: string;
-  bonusPoints?: number;
-  fastestStreak?: number;
+  basePoints?: number;
+  speedBonusPoints?: number;
   correctResponseMs?: number;
+}
+
+interface TeamResult {
+  club: string;
+  score: number;
+  basePoints: number;
+  speedBonus: number;
+  correctAnswers: number;
+  totalCorrectResponseMs: number;
+  requiredMembers: number;
+  contributedMembers: number;
+  eligible: boolean;
 }
 
 interface Question {
@@ -144,7 +156,15 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   // While true, the live question is BLANKED: a screenshot of the app switcher
   // or a backgrounded tab shows nothing (anti-AI / anti-screen-read).
   const [screenHidden, setScreenHidden] = useState(false);
-  const [bonusToast, setBonusToast] = useState<number>(0);
+  // ⚡ Fastest-finger speed-bonus toast — shown when this student's answer
+  // earned a speed bonus (1st/2nd/3rd fastest correct).
+  const [speedToast, setSpeedToast] = useState<{ rank: number; bonus: number } | null>(null);
+  const speedToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 🏆 Server-authoritative team winner — computed server-side from the
+  // eligible-team algorithm (see computeTeamResults), never derived locally.
+  const [teamWinner, setTeamWinner] = useState<string | null>(null);
+  const [teamResults, setTeamResults] = useState<TeamResult[]>([]);
 
   // Live Club Scores
   const [clubScores, setClubScores] = useState({
@@ -222,6 +242,19 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     handleSessionEnded("You were removed by the host.");
   };
 
+  // Stale/past countdown protection. The server's countdownEndsAt is the single
+  // authoritative source: a reconnecting student resumes mid-countdown from the
+  // absolute timestamp (never restarts at 5), and an event whose deadline has
+  // already passed (stale question / late reconnect) never starts a fresh
+  // 5→4→3→2→1 — the server has already moved on to LIVE.
+  const applyCountdownEndsAt = (value: string | null) => {
+    if (value && new Date(value).getTime() <= Date.now()) {
+      setCountdownEndsAt(null);
+      return;
+    }
+    setCountdownEndsAt(value);
+  };
+
   // Sync session and participant data
   const syncSession = async (token?: string, force = false) => {
     const tok = token ?? sessionToken;
@@ -275,7 +308,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           setQuizStarted(true);
         }
       }
-      setCountdownEndsAt(data.countdownEndsAt);
+      applyCountdownEndsAt(data.countdownEndsAt);
       setQuestionEndsAt(data.questionEndsAt);
       setCorrectAnswer(data.correctAnswer);
       if (data.durationSeconds) setDurationSeconds(data.durationSeconds);
@@ -334,6 +367,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       const data = await fetchJson<{
         clubs: Array<{ name: string; score: number }>;
         topStudents?: Array<{ rank: number; name: string; club: string; score: number; correctCount: number }>;
+        teamResults?: TeamResult[];
+        teamWinner?: string | null;
       }>("/api/leaderboard", undefined, mode);
       if (data.clubs) {
         setClubScores({
@@ -342,6 +377,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         });
       }
       if (data.topStudents) setTopStudents(data.topStudents);
+      if (data.teamResults) setTeamResults(data.teamResults);
+      if (data.teamWinner !== undefined) setTeamWinner(data.teamWinner);
     } catch (_) {}
   };
 
@@ -365,9 +402,12 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     // Disconnected fallback cadence (unchanged from the old poll cadence so
     // Vercel behaves exactly as before); connected mode uses the 30s
     // heartbeat safety net instead.
+    // The 5-second countdown is short — poll every 1s while it runs so the
+    // REST fallback (Vercel / disconnected socket) can never skip past it and
+    // land the student directly on LIVE without seeing 5→4→3→2→1→GO.
     pollMs:
       status === "LOCKED" ? 3000 :
-      status === "COUNTDOWN" ? 5000 :
+      status === "COUNTDOWN" ? 1000 :
       status === "LIVE" ? 10000 :
       status === "WAITING" || status === "REVEALED" ? 8000 :
       15000,
@@ -425,7 +465,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       }
     }
 
-    setCountdownEndsAt(session.countdownEndsAt ?? null);
+    applyCountdownEndsAt(session.countdownEndsAt ?? null);
     setQuestionEndsAt(session.questionEndsAt ?? null);
     setCorrectAnswer(session.correctAnswer ?? null);
     if (session.durationSeconds) setDurationSeconds(session.durationSeconds);
@@ -670,8 +710,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         ok: boolean;
         submission: any;
         participantScore?: number;
-        bonusAwarded?: number;
-        fastestStreak?: number;
+        basePoints?: number;
+        speedBonusPoints?: number;
+        speedRank?: number;
+        speedBonus?: number;
+        earnedPoints?: number;
       }>("/api/questions/submit", {
         method: "POST",
         body: JSON.stringify({
@@ -686,14 +729,16 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         setParticipant({
           ...participant,
           score: res.participantScore,
-          bonusPoints: participant.bonusPoints ?? 0,
-          fastestStreak: res.fastestStreak ?? participant.fastestStreak ?? 0,
+          basePoints: res.basePoints ?? participant.basePoints ?? 0,
+          speedBonusPoints: res.speedBonusPoints ?? participant.speedBonusPoints ?? 0,
         });
       }
-      // 🔥 FASTEST-STREAK BONUS toast — 3 correct + fastest answers in a row!
-      if (res.bonusAwarded && res.bonusAwarded > 0) {
-        setBonusToast(res.bonusAwarded);
-        window.setTimeout(() => setBonusToast(0), 4000);
+      // ⚡ Fastest-finger feedback — only when this answer earned a speed bonus
+      // (1st/2nd/3rd fastest correct). Wrong answers and rank 4+ show nothing.
+      if (res.speedBonus && res.speedBonus > 0 && res.speedRank && res.speedRank > 0) {
+        setSpeedToast({ rank: res.speedRank, bonus: res.speedBonus });
+        if (speedToastTimerRef.current) clearTimeout(speedToastTimerRef.current);
+        speedToastTimerRef.current = setTimeout(() => setSpeedToast(null), 4000);
       }
       syncSession(sessionToken, true);
     } catch (err: any) {
@@ -779,7 +824,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 }}
               >
                 <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "0.95rem", letterSpacing: "0.5px" }}>
-                  TEST MODE — 70 QUESTIONS · 7 ROUNDS — NOT THE LIVE COLLEGE QUIZ
+                  TEST MODE — 50 QUESTIONS · 3 ROUNDS — NOT THE LIVE COLLEGE QUIZ
                 </span>
               </div>
             )}
@@ -864,7 +909,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <span className="vs-side vs-innovators">🚀 IT Innovators</span>
               </div>
               <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "6px" }}>
-                {mode === "test" ? "70-Question Tech Battle — 7 Rounds · Speed + Accuracy = Victory" : "Live Tech Battle — Speed + Accuracy = Victory"}
+                {mode === "test" ? "50-Question Tech Battle — 3 Rounds · Speed + Accuracy = Victory" : "Live Tech Battle — Speed + Accuracy = Victory"}
               </p>
             </div>
 
@@ -979,9 +1024,10 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
                     </p>
                     <p style={{ marginTop: "8px", fontWeight: 700, color: "#fbbf24" }}>
-                      The test battle has 70 questions in 7 rounds — 15s / 25s / 30s.
-                      Winners are decided by correct answers AND speed, with 🔥 bonus points for 3
-                      fastest-in-a-row. Anti-AI secure mode is ON.
+                      The test battle has 50 questions in 3 rounds — 15s (Round 1) / 45s
+                      (Rounds 2–3). Scoring = base points + speed bonus: the 1st/2nd/3rd
+                      fastest correct answer earns +3/+2/+1. A club can only win when EVERY
+                      member contributes at least once. Anti-AI secure mode is ON.
                     </p>
                     <hr style={{ border: "none", borderTop: "1px solid var(--border-subtle)", margin: "14px 0" }} />
                     <p>यह केवल कनेक्शन जाँचने और QuizBattle सिस्टम का परीक्षण करने के लिए है।</p>
@@ -1054,10 +1100,10 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
         </div>
       )}
 
-      {/* 🔥 FASTEST-STREAK BONUS toast — 3 correct + fastest answers in a row */}
-      {bonusToast > 0 && (
+      {/* ⚡ Fastest-finger speed-bonus toast — 1st/2nd/3rd fastest correct */}
+      {speedToast && (
         <div className="bonus-toast">
-          🔥 BONUS +{bonusToast} PTS — 3 FASTEST CORRECT IN A ROW!
+          ⚡ {speedToast.rank === 1 ? "FASTEST" : speedToast.rank === 2 ? "2ND FASTEST" : "3RD FASTEST"} +{speedToast.bonus} SPEED BONUS
         </div>
       )}
 
@@ -1088,7 +1134,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", letterSpacing: "1px" }}>
-              TEST MODE — 70 QUESTIONS · 7 ROUNDS — NOT THE LIVE COLLEGE QUIZ
+              TEST MODE — 50 QUESTIONS · 3 ROUNDS — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -1123,11 +1169,11 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <div style={{ fontSize: "1.5rem", fontWeight: 900, color: "#fbbf24", fontFamily: "var(--font-mono)", lineHeight: 1 }}>
                   {participant.score} pts
                 </div>
-                {(participant.bonusPoints || 0) > 0 && (
+                {(participant.basePoints || 0) > 0 || (participant.speedBonusPoints || 0) > 0 ? (
                   <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#fb923c", marginTop: "2px" }}>
-                    🔥 +{participant.bonusPoints} bonus{(participant.fastestStreak || 0) >= 3 ? ` · ${participant.fastestStreak}-streak` : ""}
+                    BASE {participant.basePoints || 0} · ⚡ SPEED +{participant.speedBonusPoints || 0}
                   </div>
-                )}
+                ) : null}
               </div>
               <button
                 onClick={handleLogout}
@@ -1238,7 +1284,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
               {/* Question Text Box */}
               <div className="question-text-box">
-                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 70 : 100}</div>
+                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 50 : 100}</div>
                 <QuestionText className="question-main-text" text={question.questionText} />
               </div>
 
@@ -1388,31 +1434,48 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 The winner has been declared — here are your champions 🎉
               </p>
 
-              {/* Winning club banner */}
+              {/* Winning club banner — server-authoritative (eligible team with
+                  the highest score; never derived from local score comparison) */}
               {(() => {
-                const stack = clubScores.STACK_PUSH;
-                const innov = clubScores.IT_INNOVATORS;
-                const champion =
-                  stack > innov ? "STACK_PUSH" : innov > stack ? "IT_INNOVATORS" : null;
+                const champion = teamWinner;
                 const championColor = champion === "STACK_PUSH" ? "#60a5fa" : "#34d399";
+                const championTitle =
+                  champion === "TIE"
+                    ? "🤝 TEAM TIE — both clubs finished exactly equal!"
+                    : champion
+                      ? `🏆 ${champion === "STACK_PUSH" ? "⚡ Stack.push" : "🚀 IT Innovators"} is the CHAMPION CLUB!`
+                      : "No eligible team — every club member must contribute at least once.";
                 return (
                   <div
                     style={{
                       marginTop: "16px",
                       padding: "12px 14px",
                       borderRadius: "12px",
-                      border: `2px solid ${champion ? championColor : "#fbbf24"}`,
-                      background: champion ? `${championColor}1f` : "rgba(251, 191, 36, 0.1)",
+                      border: `2px solid ${champion && champion !== "TIE" ? championColor : "#fbbf24"}`,
+                      background: champion && champion !== "TIE" ? `${championColor}1f` : "rgba(251, 191, 36, 0.1)",
                     }}
                   >
-                    <div style={{ fontWeight: 900, fontSize: "1.05rem", color: champion ? championColor : "#fbbf24" }}>
-                      {champion
-                        ? `🏆 ${champion === "STACK_PUSH" ? "⚡ Stack.push" : "🚀 IT Innovators"} is the CHAMPION CLUB!`
-                        : "🤝 It's a TIE between the clubs!"}
+                    <div style={{ fontWeight: 900, fontSize: "1.05rem", color: champion && champion !== "TIE" ? championColor : "#fbbf24" }}>
+                      {championTitle}
                     </div>
-                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-muted)", marginTop: "4px" }}>
-                      ⚡ Stack.push {stack} pts &nbsp;·&nbsp; 🚀 IT Innovators {innov} pts
-                    </div>
+                    {teamResults.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "10px" }}>
+                        {teamResults.map((t) => (
+                          <div
+                            key={t.club}
+                            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", fontSize: "0.8rem", fontWeight: 700 }}
+                          >
+                            <span style={{ color: t.club === "STACK_PUSH" ? "#60a5fa" : "#34d399", whiteSpace: "nowrap" }}>
+                              {t.club === "STACK_PUSH" ? "⚡ Stack.push" : "🚀 IT Innovators"}
+                            </span>
+                            <span style={{ color: "var(--text-muted)", flex: 1, textAlign: "right", fontSize: "0.72rem" }}>
+                              BASE {t.basePoints} · ⚡ SPEED +{t.speedBonus} · CONTRIBUTORS {t.contributedMembers}/{t.requiredMembers} · {t.eligible ? "ELIGIBLE" : "INELIGIBLE"}
+                            </span>
+                            <span style={{ fontWeight: 900, color: "#fbbf24", fontFamily: "var(--font-mono)" }}>{t.score}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}

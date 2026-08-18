@@ -5,7 +5,7 @@ import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData";
 import { QUESTIONS } from "../server/src/data/questionsData";
 import { ApiError, isSessionExpired } from "../client/src/services/api";
 
-describe("Test mode — 70-question isolated quiz + global student logout", () => {
+describe("Test mode — 50-question isolated quiz + global student logout", () => {
   let server: http.Server;
   let baseUrl: string;
 
@@ -39,22 +39,22 @@ describe("Test mode — 70-question isolated quiz + global student logout", () =
   });
 
   // ── 1. Question set ─────────────────────────────────────────────────────────
-  it("test quiz contains exactly 70 questions across 7 rounds and no other questions", () => {
-    expect(TEST_QUESTIONS).toHaveLength(70);
+  it("test quiz contains exactly 50 questions across 3 rounds and no other questions", () => {
+    expect(TEST_QUESTIONS).toHaveLength(50);
     expect(TEST_QUESTIONS.map((q) => q.questionNumber)).toEqual(
-      Array.from({ length: 70 }, (_, i) => i + 1),
+      Array.from({ length: 50 }, (_, i) => i + 1),
     );
-    // Round structure: Q1-40 GK (1pt each), Q41-60 Output + Reasoning (2pt),
-    // Q61-70 Hard Puzzles (3pt)
+    // Round structure: Q1-20 Easy IT (1pt), Q21-45 C/C++ Output (2pt),
+    // Q46-50 Java Pattern Printing (3pt)
     const rounds = new Set(TEST_QUESTIONS.map((q) => q.roundId));
-    expect(rounds).toEqual(new Set([1, 2, 3, 4, 5, 6, 7]));
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 1 && q.points === 1)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 2 && q.points === 1)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 3 && q.points === 1)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 4 && q.points === 1)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 5 && q.points === 2)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 6 && q.points === 2)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 7 && q.points === 3)).toHaveLength(10);
+    expect(rounds).toEqual(new Set([1, 2, 3]));
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 1 && q.points === 1)).toHaveLength(20);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 2 && q.points === 2)).toHaveLength(25);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 3 && q.points === 3)).toHaveLength(5);
+    // Pattern questions (Q46-Q50) keep their multi-line pattern options.
+    for (const q of TEST_QUESTIONS.filter((x) => x.roundId === 3)) {
+      expect(q.optionA).toContain("\n");
+    }
   });
 
   // ── 2. ID isolation ─────────────────────────────────────────────────────────
@@ -141,7 +141,8 @@ describe("Test mode — 70-question isolated quiz + global student logout", () =
 
     const lb = await (await api("/test/leaderboard")).json();
     const total = lb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0);
-    expect(total).toBe(q1.points);
+    // Alice's correct answer was the FIRST correct arrival: base + 3 speed bonus.
+    expect(total).toBe(q1.points + 3);
 
     // Live leaderboard must be completely unaffected by test activity
     const liveLb = await (await api("/leaderboard")).json();
@@ -198,7 +199,8 @@ describe("Test mode — 70-question isolated quiz + global student logout", () =
     expect(testLb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0)).toBe(0);
 
     const liveLb = await (await api("/leaderboard")).json();
-    expect(liveLb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0)).toBe(QUESTIONS[0].points);
+    // Live student was the first (only) correct arrival: base + 3 speed bonus.
+    expect(liveLb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0)).toBe(QUESTIONS[0].points + 3);
 
     // Live student session still valid after a test reset
     const liveSession = await api(`/participants/session?token=${encodeURIComponent(regLive.participant.sessionToken)}`);
@@ -252,7 +254,8 @@ describe("Test mode — 70-question isolated quiz + global student logout", () =
     expect(liveLb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0)).toBe(0);
 
     const testLb = await (await api("/test/leaderboard")).json();
-    expect(testLb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0)).toBe(TEST_QUESTIONS[0].points);
+    // Test student was the first (only) correct arrival: base + 3 speed bonus.
+    expect(testLb.clubs.reduce((sum: number, c: { score: number }) => sum + c.score, 0)).toBe(TEST_QUESTIONS[0].points + 3);
 
     const testSession = await api(`/test/participants/session?token=${encodeURIComponent(regTest.participant.sessionToken)}`);
     expect(testSession.status).toBe(200);

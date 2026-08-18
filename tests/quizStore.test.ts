@@ -74,6 +74,8 @@ describe("Redis-backed quiz API behavior", () => {
     await request("/admin/reveal-answer", { method: "POST", headers: adminHeaders, body: "{}" });
     const leaderboard = await request("/leaderboard");
     const total = leaderboard.clubs.reduce((sum: number, club: { score: number }) => sum + club.score, 0);
-    expect(total).toBe(30 * QUESTIONS[0].points);
+    // 30 correct answers: 30 × base + speed bonuses for the first three
+    // correct arrivals (+3, +2, +1) = 30 + 6.
+    expect(total).toBe(30 * QUESTIONS[0].points + 6);
   });
 });
