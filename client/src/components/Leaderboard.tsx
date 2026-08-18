@@ -1,54 +1,29 @@
-import { useEffect, useState } from "react";
-import { fetchJson } from "../services/api";
-import { socket } from "../socket";
-
-interface LeaderboardEntry {
-  id: number;
-  name: string;
-  club: string;
-  score: number;
-  correctCount: number;
-  attemptCount: number;
-}
+import { useState } from "react";
+import { useRealtime, type LeaderboardEvent } from "../services/realtime";
 
 export default function Leaderboard() {
-  const [participants, setParticipants] = useState<LeaderboardEntry[]>([]);
   const [clubScores, setClubScores] = useState({
     STACK_PUSH: 0,
     IT_INNOVATORS: 0,
   });
 
-  const refreshLeaderboard = async () => {
-    try {
-      const data = await fetchJson<any>("/api/leaderboard");
-      if (data.clubs) {
-        setClubScores({
-          STACK_PUSH:
-            data.clubs.find((c: any) => c.name === "STACK_PUSH")?.score ?? 0,
-          IT_INNOVATORS:
-            data.clubs.find((c: any) => c.name === "IT_INNOVATORS")?.score ?? 0,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to fetch leaderboard", error);
+  const applyLeaderboard = (payload: LeaderboardEvent) => {
+    if (payload.clubs) {
+      setClubScores({
+        STACK_PUSH:
+          payload.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
+        IT_INNOVATORS:
+          payload.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
+      });
     }
   };
 
-  useEffect(() => {
-    void refreshLeaderboard();
-
-    socket.on("leaderboard:update", () => {
-      void refreshLeaderboard();
-    });
-    socket.on("participant:submitted", () => {
-      void refreshLeaderboard();
-    });
-
-    return () => {
-      socket.off("leaderboard:update");
-      socket.off("participant:submitted");
-    };
-  }, []);
+  useRealtime({
+    mode: "live",
+    resync: () => {},
+    pollMs: 30000,
+    onLeaderboard: applyLeaderboard,
+  });
 
   return (
     <div

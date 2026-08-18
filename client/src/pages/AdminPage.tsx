@@ -2,6 +2,17 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from "react"
 import Footer from "../components/Footer";
 import QuestionText from "../components/QuestionText";
 import { fetchJson, setAdminPassword, clearAdminPassword, type QuizMode } from "../services/api";
+import { useRealtime } from "../services/realtime";
+import { isRealtimeConnected } from "../socket";
+import BackgroundFX from "../components/BackgroundFX";
+import CinematicControls from "../components/CinematicControls";
+
+interface LogEntry {
+  id: number;
+  time: string;
+  text: string;
+  tone?: "ok" | "warn" | "info";
+}
 
 interface Question {
   id: number;
@@ -147,10 +158,35 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   const [questionRemaining, setQuestionRemaining] = useState<number | null>(null);
   const [durationSeconds, setDurationSeconds] = useState(30);
 
+  // Realtime connection health + compact event log (terminal aesthetic).
+  const [realtimeUp, setRealtimeUp] = useState<boolean>(isRealtimeConnected());
+  const [eventLog, setEventLog] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
+  const pushLog = useCallback((text: string, tone: LogEntry["tone"] = "info") => {
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    setEventLog((cur) => [{ id: ++logIdRef.current, time, text, tone }, ...cur].slice(0, 40));
+  }, []);
+
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(""), 4000);
   };
+
+  // Coalesced refresh — realtime events can burst (e.g. 60 students submitting
+  // at once), so multiple events within a short window collapse into one
+  // summary fetch instead of N.
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshScheduledRef = useRef(false);
+  const scheduleRefresh = useCallback((delayMs = 250) => {
+    if (refreshScheduledRef.current) return;
+    refreshScheduledRef.current = true;
+    refreshTimerRef.current = setTimeout(() => {
+      refreshScheduledRef.current = false;
+      void refreshDataRef.current();
+    }, delayMs);
+  }, []);
+  const refreshDataRef = useRef<() => Promise<void>>(async () => {});
 
   // Read the TEST portal's open/closed state (scoped to /api/test/... so the
   // live portal is never touched or read here).
@@ -238,6 +274,79 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
       setSubmissions((cur) => (JSON.stringify(cur) === JSON.stringify(nextSubmissions) ? cur : nextSubmissions));
     } catch (_) {}
   }, [isAuthenticated]);
+  refreshDataRef.current = refreshData;
+
+  // Push log entry when the server-driven state machine moves (status or
+  // question changes) — derived locally from realtime payloads, no refetch.
+  const lastStatusRef = useRef<string | null>(null);
+  const applyRealtimeStatus = useCallback((statusStr: string | undefined, qNum?: number) => {
+    if (!statusStr) return;
+    if (statusStr !== lastStatusRef.current) {
+      const prev = lastStatusRef.current;
+      lastStatusRef.current = statusStr;
+      if (prev !== null) {
+        pushLog(
+          `STATE ${prev} → ${statusStr}${qNum ? ` · Q${qNum}` : ""}`,
+          statusStr === "REVEALED" ? "ok" : statusStr === "LOCKED" ? "warn" : "info",
+        );
+      }
+    }
+    if (statusStr === "LIVE" || statusStr === "COUNTDOWN" || statusStr === "REVEALED") setStatus(statusStr);
+  }, [pushLog]);
+
+  // Realtime-driven updates. Polling only happens while the socket is
+  // disconnected (Vercel fallback — same cadence as before); otherwise every
+  // state change arrives as an event and triggers one coalesced summary fetch.
+  const realtimeConnected = useRealtime({
+    mode,
+    resync: () => {
+      void refreshData();
+      if (mode === "live") void refreshTestPortal();
+    },
+    pollMs: status === "LIVE" || status === "COUNTDOWN" ? 2000 : 3000,
+    heartbeatMs: 15000,
+    onState: (payload) => {
+      const s = payload?.session;
+      if (s) {
+        applyRealtimeStatus(s.status, s.currentQuestionId ?? undefined);
+        if (s.status === "PREPARING" && s.currentQuestionId) setCurrentQNum(s.currentQuestionId);
+        setQuestionEndsAt(s.questionEndsAt ?? null);
+        if (s.durationSeconds) setDurationSeconds(s.durationSeconds);
+        if (typeof s.portalOpen === "boolean") setPortalOpen(s.portalOpen);
+      }
+      scheduleRefresh();
+    },
+    onLeaderboard: (payload) => {
+      if (payload.clubs) setClubs(payload.clubs);
+      scheduleRefresh(500);
+    },
+    onJoined: (p) => {
+      if (p.name) pushLog(`PARTICIPANT_JOINED · ${p.name}${p.club ? ` (${p.club})` : ""}`, "ok");
+      if (p.participantsCount !== undefined) setParticipantsCount(p.participantsCount);
+      scheduleRefresh();
+    },
+    onLeft: (p) => {
+      if (p.name) pushLog(`PARTICIPANT_LEFT · ${p.name}`, "warn");
+      if (p.participantsCount !== undefined) setParticipantsCount(p.participantsCount);
+      scheduleRefresh();
+    },
+    onSubmitted: (p) => {
+      if (p.participantName && p.answer) {
+        pushLog(
+          `ANSWER_SUBMITTED · ${p.participantName} → ${p.answer}${p.responseTimeMs ? ` (${(p.responseTimeMs / 1000).toFixed(2)}s)` : ""}`,
+          "info",
+        );
+      }
+      scheduleRefresh();
+    },
+    onReveal: () => scheduleRefresh(300),
+    onFinished: () => pushLog("QUIZ_FINISHED — results declared", "ok"),
+  });
+
+  // Reflect realtime transport state in the connection indicator.
+  useEffect(() => {
+    setRealtimeUp(realtimeConnected);
+  }, [realtimeConnected]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -251,16 +360,8 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    refreshData();
-    // Poll faster while a question is actually running (live/countdown) so the
-    // host sees submissions and status changes with less delay; idle states
-    // can poll slower to keep Redis traffic down. Cadence kept modest so the
-    // free Redis tier can serve a full live event (the single host poll is
-    // cheap, but it still costs commands).
-    const pollMs = status === "LIVE" || status === "COUNTDOWN" ? 2000 : 3000;
-    const interval = setInterval(refreshData, pollMs);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, refreshData, status]);
+    void refreshData();
+  }, [isAuthenticated, refreshData]);
 
   // 30s Live Question Timer countdown
   useEffect(() => {
@@ -395,6 +496,8 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
   // --- 2. ADMIN DASHBOARD ---
   return (
     <div className="app-shell">
+      <BackgroundFX />
+      <CinematicControls compact />
       <div className="container">
         {/* Notification Toast */}
         {notification && (
@@ -511,7 +614,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           <div className="score-card">
             <div className="score-card-title" style={{ color: "var(--text-muted)" }}>Students Joined</div>
             <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#38bdf8", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
-              {participantsCount}{mode === "test" ? " / 60" : ""}
+              {participantsCount}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "2px" }}>
               {stackParticipants.length} Stack · {innovatorsParticipants.length} Innovators
@@ -533,6 +636,71 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           <div className="score-card innovators">
             <div className="score-card-title">IT Innovators</div>
             <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>{innovScore}</div>
+          </div>
+        </div>
+
+        {/* Realtime health + event log — compact terminal aesthetic */}
+        <div className="glass-card" style={{ marginBottom: "20px", padding: "12px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span
+                className={`badge ${realtimeUp ? "badge-live" : "badge-waiting"}`}
+                style={{ fontSize: "0.75rem" }}
+              >
+                {realtimeUp ? (<span><span className="pulse-dot" /> REALTIME SYNCED</span>) : (<span>POLLING FALLBACK — RECONNECTING</span>)}
+              </span>
+              <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                EVENT STREAM
+              </span>
+            </div>
+            {eventLog.length > 0 && (
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{ padding: "4px 10px", fontSize: "0.7rem" }}
+                onClick={() => setEventLog([])}
+              >
+                Clear Log
+              </button>
+            )}
+          </div>
+          <div
+            className="event-log"
+            style={{
+              marginTop: "10px",
+              maxHeight: "150px",
+              overflowY: "auto",
+              background: "rgba(2, 6, 23, 0.8)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "8px",
+              padding: "8px 10px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.72rem",
+            }}
+          >
+            {eventLog.length === 0 ? (
+              <div style={{ color: "var(--text-dim)", lineHeight: 1.6 }}>
+                -- waiting for events --
+                <br />
+                (start a question or wait for students to join)
+              </div>
+            ) : (
+              eventLog.map((entry) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    color:
+                      entry.tone === "ok" ? "#4ade80" :
+                      entry.tone === "warn" ? "#fbbf24" :
+                      "#7dd3fc",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  <span style={{ color: "#475569" }}>{entry.time}</span> {entry.text}
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -564,9 +732,6 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 {portalOpen
                   ? "Students can log in and join the quiz now. Close it to stop late joiners (existing students keep playing)."
                   : "Students CANNOT log in right now. Press OPEN THE PORTAL when you are ready for them to join."}
-                {mode === "test" && (
-                  <span style={{ color: "#fcd34d" }}> Member limit: 60 students maximum.</span>
-                )}
               </div>
             </div>
             <button
@@ -587,7 +752,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
         </div>
 
         {/* Test Portal quick control — LIVE dashboard only. Opens ONLY the
-            practice/test portal (/test) for up to 60 members; the live portal
+            practice/test portal (/test); the live portal
             is never affected. */}
         {mode === "live" && (
           <div
@@ -615,7 +780,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                   </span>
                 </div>
                 <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "4px" }}>
-                  Opens ONLY the practice/test portal (up to 60 members) — the live portal is not affected.
+                  Opens ONLY the practice/test portal — the live portal is not affected.
                 </div>
               </div>
               <button

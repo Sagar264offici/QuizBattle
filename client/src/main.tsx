@@ -16,7 +16,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/student" element={<StudentPage />} />
         <Route path="/join" element={<StudentPage />} />
         <Route path="/quiz" element={<StudentPage />} />
-        {/* Test mode (60-question battle — 3 rounds, fully isolated from the live quiz) */}
+        {/* Test mode (70-question battle — fully isolated from the live quiz) */}
         <Route path="/test" element={<StudentPage mode="test" />} />
         <Route path="/host" element={<AdminPage />} />
         <Route path="/admin" element={<AdminPage />} />

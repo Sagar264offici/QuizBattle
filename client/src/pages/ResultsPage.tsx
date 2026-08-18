@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react";
 import Footer from "../components/Footer";
 import { fetchJson, setAdminPassword, clearAdminPassword, type QuizMode } from "../services/api";
+import { useRealtime } from "../services/realtime";
+import BackgroundFX from "../components/BackgroundFX";
+import CinematicControls from "../components/CinematicControls";
 import {
   downloadCertificatePNG,
   formatDuration,
@@ -72,11 +75,25 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
     }
   };
 
+  // Results only change when scores change — refresh on realtime events
+  // instead of polling every 5s. Fallback cadence only when disconnected.
+  useRealtime({
+    mode,
+    resync: () => {
+      if (isAuthenticated) void load();
+    },
+    pollMs: 10000,
+    heartbeatMs: 30000,
+    onLeaderboard: () => {
+      if (isAuthenticated) void load();
+    },
+    onFinished: () => {
+      if (isAuthenticated) void load();
+    },
+  });
+
   useEffect(() => {
-    if (!isAuthenticated) return;
-    void load();
-    const interval = setInterval(load, 5000);
-    return () => clearInterval(interval);
+    if (isAuthenticated) void load();
   }, [mode, isAuthenticated]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -210,6 +227,8 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   return (
     <div className="app-shell">
+      <BackgroundFX />
+      <CinematicControls compact />
       <div className="container">
         {/* Header */}
         <div className="admin-header-bar">

@@ -10,6 +10,11 @@ import cors from "cors";
 import express from "express";
 import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData.js";
 import { createMemoryStore } from "./memoryStore.js";
+import {
+  emitRealtime,
+  realtimeClientCount,
+  isRealtimeAttached,
+} from "../server/src/realtime.js";
 export interface QuestionItem {
   id: number;
   questionNumber: number;
@@ -1395,6 +1400,7 @@ function isUpstashQuotaErrorBody(text: string): boolean {
 }
 
 async function redisCommand(cmd: (string | number)[]) {
+  countRedisCommand(cmd);
   // In-memory mode: dispatch to the local store — never touches Upstash.
   if (memoryStore) return memoryStore.command(cmd);
   try {
@@ -1440,6 +1446,7 @@ async function redisCommand(cmd: (string | number)[]) {
  */
 async function redisPipeline(cmds: (string | number)[][]) {
   if (cmds.length === 0) return [];
+  for (const c of cmds) countRedisCommand(c);
   // In-memory mode: apply the batch against the local store.
   if (memoryStore) return memoryStore.pipeline(cmds);
   try {
@@ -1477,6 +1484,26 @@ async function redisPipeline(cmds: (string | number)[][]) {
     console.error("Redis pipeline error:", err);
     return REDIS_UNAVAILABLE;
   }
+}
+
+// ── In-process Redis command counters (diagnostics) ────────────────────────
+// Incremented on every command issued through redisCommand/redisPipeline.
+// On a persistent server these give a live measure of Redis load; on Vercel
+// they are per-lambda snapshots (still useful as a rough gauge).
+const REDIS_READ_COMMANDS = new Set(["GET", "HGET", "HGETALL", "SMEMBERS", "SISMEMBER", "SCARD", "PING"]);
+const REDIS_WRITE_COMMANDS = new Set(["SET", "HSET", "HDEL", "SADD", "SREM", "INCR", "INCRBY", "DEL", "EXPIRE", "FLUSHDB", "EVAL"]);
+const redisCounters = {
+  commands: 0,
+  reads: 0,
+  writes: 0,
+  since: Date.now(),
+};
+
+function countRedisCommand(cmd: (string | number)[]) {
+  const name = String(cmd[0]).toUpperCase();
+  redisCounters.commands += 1;
+  if (REDIS_READ_COMMANDS.has(name)) redisCounters.reads += 1;
+  else if (REDIS_WRITE_COMMANDS.has(name)) redisCounters.writes += 1;
 }
 
 const redis = {
@@ -1525,11 +1552,11 @@ type QuizStatus = "PREPARING" | "WAITING" | "COUNTDOWN" | "LIVE" | "LOCKED" | "R
 const COUNTDOWN_SECONDS = 5;
 
 /**
- * Maximum number of students allowed to join the TEST portal (practice mode).
- * The live event portal is unlimited — this cap applies to test mode only and
- * is enforced at registration time (PORTAL_FULL).
+ * There is deliberately NO hard participant ceiling. Live and test portals
+ * admit as many students as the infrastructure (Redis, function concurrency,
+ * bandwidth) can serve. Registration is concurrency-safe (atomic SADD name
+ * dedup) and capacity is an infrastructure concern, not an app constant.
  */
-const TEST_MODE_MAX_MEMBERS = 60;
 
 /**
  * Bonus points awarded whenever a participant answers 3 questions correctly
@@ -1807,13 +1834,35 @@ function parseState(raw: string | null | undefined): QuizSessionState | null {
 async function getState(mode: QuizMode = "live"): Promise<QuizSessionState> {
   const raw = await redis.get<string>(quizKeys(mode).state);
   if (raw === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
-  const parsed = parseState(raw);
+  return materializeState(mode, parseState(raw));
+}
+
+/**
+ * Apply server-authoritative auto-transitions to a parsed state, persist any
+ * transition, and push it to realtime clients (without them polling). Callers
+ * that already read the raw state in a pipeline use this instead of getState()
+ * so the transition + broadcast logic lives in exactly one place.
+ */
+async function materializeState(mode: QuizMode, parsed: QuizSessionState | null): Promise<QuizSessionState> {
   if (!parsed) return { ...DEFAULT_STATE };
   const before = JSON.stringify(parsed);
   const next = applyAutoTransitions(parsed, mode);
   // Only persist when a transition actually happened.
   if (JSON.stringify(next) !== before) {
     await redis.set(quizKeys(mode).state, JSON.stringify(next));
+    // Realtime: tell clients the state changed without them polling. Auto
+    // transitions (COUNTDOWN→LIVE→REVEALED→WAITING) are server-authoritative
+    // timing events — exactly what Socket.IO is for. Clubs/counts are
+    // untouched by these transitions, so a session+question payload is enough.
+    const currentQ = getQuestion(next.currentQuestionId, mode);
+    const safeQ =
+      next.status === "PREPARING" || next.status === "WAITING" || next.status === "FINISHED"
+        ? null
+        : sanitizeQuestion(currentQ);
+    emitRealtime(mode, "quiz:state", {
+      session: { ...next, currentQuestion: safeQ },
+      currentQuestion: safeQ,
+    });
   }
   return next;
 }
@@ -1823,6 +1872,67 @@ async function setState(mode: QuizMode, patch: Partial<QuizSessionState>): Promi
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
   await redis.set(quizKeys(mode).state, JSON.stringify(next));
   return next;
+}
+
+// ── Realtime broadcast helpers ───────────────────────────────────────────────
+// Every state change publishes a quiz:state snapshot over Socket.IO so clients
+// update instantly without polling. On Vercel (no attached socket server) these
+// are cheap no-ops and the REST polling fallback carries the quiz. The payloads
+// are sanitized exactly like the equivalent REST endpoints (no correct answers
+// before reveal, no scoring internals to students).
+
+/**
+ * Broadcast the authoritative quiz state to every client in a mode.
+ * `state` may be supplied by the caller (already fetched); otherwise a single
+ * state read is done. One extra pipelined round-trip fetches club scores and
+ * the participant count for the snapshot.
+ */
+async function publishState(mode: QuizMode, state?: QuizSessionState) {
+  let s = state;
+  if (!s) {
+    s = await getState(mode);
+  }
+  const keys = quizKeys(mode);
+  const results = await redisPipeline([
+    ["GET", keys.clubScore("STACK_PUSH")],
+    ["GET", keys.clubScore("IT_INNOVATORS")],
+    ["SCARD", keys.participantTokens],
+  ]);
+  const [stackRaw, innovRaw, countRaw] = Array.isArray(results)
+    ? results
+    : [undefined, undefined, undefined];
+  const currentQ = getQuestion(s.currentQuestionId, mode);
+  const safeQ =
+    s.status === "PREPARING" || s.status === "WAITING" || s.status === "FINISHED"
+      ? null
+      : sanitizeQuestion(currentQ);
+  emitRealtime(mode, "quiz:state", {
+    session: { ...s, currentQuestion: safeQ },
+    currentQuestion: safeQ,
+    clubs: [
+      { name: "STACK_PUSH", score: stackRaw ? parseInt(String(stackRaw), 10) || 0 : 0 },
+      { name: "IT_INNOVATORS", score: innovRaw ? parseInt(String(innovRaw), 10) || 0 : 0 },
+    ],
+    participantsCount: Number(countRaw) || 0,
+  });
+}
+
+/** Broadcast live club scores after a submission (2 GETs, 1 round-trip). */
+async function publishClubScores(mode: QuizMode) {
+  const keys = quizKeys(mode);
+  const results = await redisPipeline([
+    ["GET", keys.clubScore("STACK_PUSH")],
+    ["GET", keys.clubScore("IT_INNOVATORS")],
+  ]);
+  const [stackRaw, innovRaw] = Array.isArray(results)
+    ? results
+    : [undefined, undefined];
+  emitRealtime(mode, "leaderboard:update", {
+    clubs: [
+      { name: "STACK_PUSH", score: stackRaw ? parseInt(String(stackRaw), 10) || 0 : 0 },
+      { name: "IT_INNOVATORS", score: innovRaw ? parseInt(String(innovRaw), 10) || 0 : 0 },
+    ],
+  });
 }
 
 function parseHGetAll(res: any): any[] {
@@ -2158,6 +2268,47 @@ r.post("/admin/login", (req, res) => {
 });
 
 /**
+ * Realtime transition pump — server-authoritative timer pushes.
+ *
+ * The client renders the countdown locally from absolute timestamps, but the
+ * server must still ADVANCE the state machine (COUNTDOWN→LIVE→REVEALED→WAITING)
+ * and broadcast each step so nobody has to poll to discover a transition. On a
+ * persistent host this schedules a single setTimeout per transition; when it
+ * fires it materializes state (emitting quiz:state) and chains the next step.
+ * Skipped entirely on Vercel (no reliable timers) and in tests — there the
+ * lazy-transition-on-read path handles everything exactly as before.
+ */
+const realtimePumps = new Set<string>();
+
+function scheduleTransitionPump(mode: QuizMode, state: QuizSessionState) {
+  if (!isRealtimeAttached()) return;
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) return;
+  const now = Date.now();
+  let nextAt: number | null = null;
+  if (state.status === "COUNTDOWN" && state.countdownEndsAt) {
+    nextAt = new Date(state.countdownEndsAt).getTime();
+  } else if (state.status === "LIVE" && state.questionEndsAt) {
+    nextAt = new Date(state.questionEndsAt).getTime();
+  } else if (state.status === "REVEALED") {
+    nextAt = now + REVEAL_DISPLAY_SECONDS * 1000;
+  }
+  if (nextAt === null || nextAt <= now) return;
+  const key = mode;
+  if (realtimePumps.has(key)) return;
+  realtimePumps.add(key);
+  const delay = Math.max(0, nextAt - now) + 60; // small buffer past the mark
+  setTimeout(async () => {
+    realtimePumps.delete(key);
+    try {
+      const s = await getState(mode); // materializes + broadcasts if changed
+      scheduleTransitionPump(mode, s); // chain to the next transition
+    } catch (_) {
+      /* state store hiccup — the next read will materialize anyway */
+    }
+  }, delay);
+}
+
+/**
  * Register every quiz route for one mode. The live quiz uses prefix "" and
  * mode "live"; the test mode uses prefix "/test" and mode "test". Both modes
  * share the exact same engine/handlers but are scoped to their own Redis
@@ -2187,6 +2338,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       questionStartedAt: null,
       correctAnswer: null,
     });
+    await publishState(mode, state);
+    scheduleTransitionPump(mode, state);
     res.json({ ok: true, state });
   });
 
@@ -2209,6 +2362,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       durationSeconds: dur,
       correctAnswer: null,
     });
+    await publishState(mode, state);
+    scheduleTransitionPump(mode, state);
     res.json({ ok: true, state });
   });
 
@@ -2218,6 +2373,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       return res.status(400).json({ error: `Invalid transition: ${cur.status} -> LOCKED` });
     }
     const state = await setState(mode, { status: "LOCKED" });
+    await publishState(mode, state);
     res.json({ ok: true, state });
   });
 
@@ -2228,6 +2384,10 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     }
     const q = getQuestion(cur.currentQuestionId, mode);
     const state = await setState(mode, { status: "REVEALED", correctAnswer: q?.correctAnswer ?? null });
+    await publishState(mode, state);
+    // Projector/display clients get the reveal pushed immediately.
+    emitRealtime(mode, "display:reveal", { correctAnswer: state.correctAnswer });
+    scheduleTransitionPump(mode, state);
     res.json({ ok: true, state, correctAnswer: state.correctAnswer });
   });
 
@@ -2243,6 +2403,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       questionEndsAt: null,
       correctAnswer: null,
     });
+    await publishState(mode, state);
     res.json({ ok: true, state });
   });
 
@@ -2262,6 +2423,12 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       return res.status(rejection.status).json({ error: rejection.error, code: rejection.code });
     }
     await kickParticipant(mode, String(token), p);
+    const count = (await redisCommand(["SCARD", quizKeys(mode).participantTokens])) || 0;
+    emitRealtime(mode, "participant:left", {
+      name: p.name,
+      participantsCount: Number(count) || 0,
+    });
+    await publishState(mode);
     res.json({ ok: true, message: `${p.name} was removed from the quiz.`, participantId: p.id });
   });
 
@@ -2276,6 +2443,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       questionEndsAt: null,
       correctAnswer: null,
     });
+    await publishState(mode, state);
     res.json({ ok: true, state });
   });
 
@@ -2290,6 +2458,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       questionEndsAt: null,
       correctAnswer: null,
     });
+    await publishState(mode, state);
     res.json({ ok: true, state });
   });
 
@@ -2329,6 +2498,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       questionEndsAt: null,
       correctAnswer: null,
     });
+    await publishState(mode, state);
     res.json({ ok: true, message: "Scores and responses reset successfully. Participants retained.", state });
   });
 
@@ -2354,16 +2524,21 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       // until the host explicitly opens it.
       portalOpen: false,
     });
+    await publishState(mode, state);
     res.json({ ok: true, message: "All data cleared — fresh event is in PREPARING state", state });
   });
 
   router.post(`${prefix}/admin/end-quiz`, requireAdmin, async (_req, res) => {
     const state = await setState(mode, { status: "FINISHED" });
+    await publishState(mode, state);
+    emitRealtime(mode, "quiz:finished", { mode });
     res.json({ ok: true, state });
   });
 
   router.post(`${prefix}/admin/logout-all-students`, requireAdmin, async (_req, res) => {
     const gen = await logoutAllStudents(mode);
+    emitRealtime(mode, "participant:left", { name: null, participantsCount: 0 });
+    await publishState(mode);
     res.json({ ok: true, message: "All students logged out. Their sessions are now invalid.", sessionGeneration: gen });
   });
 
@@ -2373,11 +2548,13 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
   // (e.g. after everyone is in) to stop late logins.
   router.post(`${prefix}/admin/open-portal`, requireAdmin, async (_req, res) => {
     const state = await setState(mode, { portalOpen: true });
+    await publishState(mode, state);
     res.json({ ok: true, portalOpen: true, state });
   });
 
   router.post(`${prefix}/admin/close-portal`, requireAdmin, async (_req, res) => {
     const state = await setState(mode, { portalOpen: false });
+    await publishState(mode, state);
     res.json({ ok: true, portalOpen: false, state });
   });
 
@@ -2402,6 +2579,15 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       state = applyAutoTransitions(parsedState, mode);
       if (JSON.stringify(state) !== before) {
         await redis.set(keys.state, JSON.stringify(state));
+        const currentQtx = getQuestion(state.currentQuestionId, mode);
+        const safeQtx =
+          state.status === "PREPARING" || state.status === "WAITING" || state.status === "FINISHED"
+            ? null
+            : sanitizeQuestion(currentQtx);
+        emitRealtime(mode, "quiz:state", {
+          session: { ...state, currentQuestion: safeQtx },
+          currentQuestion: safeQtx,
+        });
       }
     }
     const currentQ = getQuestion(state.currentQuestionId, mode);
@@ -2559,6 +2745,35 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     res.json(getQuestionSet(mode));
   });
 
+  /**
+   * Developer/admin diagnostics — realtime status + live Redis command
+   * counters (in-process; on Vercel they're per-lambda snapshots). No
+   * credentials or secrets are exposed.
+   */
+  router.get(`${prefix}/admin/diagnostics`, requireAdmin, async (_req, res) => {
+    const state = await getState(mode);
+    const count = (await redisCommand(["SCARD", quizKeys(mode).participantTokens])) || 0;
+    res.json({
+      mode,
+      realtime: {
+        attached: isRealtimeAttached(),
+        clients: realtimeClientCount(),
+      },
+      store: {
+        memory: USE_MEMORY_STORE,
+        redis: await redis.ping().catch(() => null),
+      },
+      redisCounters: { ...redisCounters },
+      state: {
+        status: state.status,
+        currentQuestionId: state.currentQuestionId,
+        portalOpen: state.portalOpen,
+        participantsCount: Number(count) || 0,
+      },
+      now: new Date().toISOString(),
+    });
+  });
+
   // ── Public Endpoints ────────────────────────────────────────────────────────
   router.get(`${prefix}/quiz-state`, async (_req, res) => {
     const state = await getState(mode);
@@ -2611,16 +2826,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
     const topStudents = students.slice(0, 3).map((p, idx) => ({ ...p, rank: idx + 1 }));
 
     let state: QuizSessionState;
-    const parsed = parseState(stateRaw as string | null);
-    if (!parsed) {
-      state = { ...DEFAULT_STATE };
-    } else {
-      const before = JSON.stringify(parsed);
-      state = applyAutoTransitions(parsed, mode);
-      if (JSON.stringify(state) !== before) {
-        await redis.set(keys.state, JSON.stringify(state));
-      }
-    }
+    state = await materializeState(mode, parseState(stateRaw as string | null));
 
     let fastestTap = null;
     const perQuestion = state.currentQuestionId ? await redis.get<string>(keys.fastest(state.currentQuestionId)) : null;
@@ -2660,46 +2866,55 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         });
       }
 
-      // Anti-cheat + portal cap in ONE pipelined round trip (SCARD for the
-      // test-member cap, SISMEMBER for the duplicate-name guard). Keeping
-      // this to a single Redis request is what lets the 60-student cap test
-      // finish well inside its timeout.
       const keys = quizKeys(mode);
       const nameKey = keys.nameKey(n, String(club));
-      const checks = await redisPipeline([
-        ["SCARD", keys.participantTokens],
-        ["SISMEMBER", keys.nameIndex, nameKey],
-      ]);
-      if (checks === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
-      const [memberCountRaw, nameTaken] = Array.isArray(checks) ? checks : [undefined, undefined];
-      const memberCount = typeof memberCountRaw === "number" ? memberCountRaw : 0;
 
-      // Test-portal member cap: the practice quiz admits at most
-      // TEST_MODE_MAX_MEMBERS students. The live event portal is unlimited.
-      if (mode === "test" && memberCount >= TEST_MODE_MAX_MEMBERS) {
-        return res.status(403).json({
-          code: "PORTAL_FULL",
-          error: `The test portal is full (maximum ${TEST_MODE_MAX_MEMBERS} members). Please wait for the host to free a spot.`,
-        });
-      }
-
-      // Anti-cheat: a student cannot register twice under the same name AND
-      // club (a second phone silently joining as the same person). Kicked
-      // students are removed from the index, so they CAN rejoin.
-      if (nameTaken === 1) {
+      // Concurrency-safe duplicate-name guard: SADD is atomic, so two phones
+      // registering the same name+club simultaneously can never both pass —
+      // exactly one SADD returns 1 (newly added) and the other gets 0. This
+      // replaces the old read-then-write SISMEMBER check that raced under
+      // simultaneous joins, and needs no extra SCARD (there is no member cap).
+      const nameAdded = await redisCommand(["SADD", keys.nameIndex, nameKey]);
+      if (nameAdded !== 1) {
         return res.status(409).json({
           code: "NAME_TAKEN",
           error: `A student named "${n}" is already registered in ${String(club).replace(/_/g, " ")}. If that is you on another device, ask the host to remove the duplicate first.`,
         });
       }
 
-      const nextId = await redis.incr(quizKeys(mode).nextId);
-      const id = Number(nextId) || Date.now();
-      const gen = await getSessionGen(mode);
+      let participant: any;
+      try {
+        // INCR (unique id) + session generation in one pipelined round-trip.
+        const idGen = await redisPipeline([
+          ["INCR", keys.nextId],
+          ["GET", keys.sessionGen],
+        ]);
+        if (idGen === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
+        const [nextId, genRaw] = Array.isArray(idGen) ? idGen : [undefined, undefined];
+        const id = Number(nextId) || Date.now();
+        const gen = (() => {
+          const g = genRaw ? parseInt(String(genRaw), 10) : 0;
+          return g > 0 ? g : 1;
+        })();
 
-      const token = encodeToken({ id, name: n, club: String(club), gen });
-      const participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, totalResponseMs: 0, fastestStreak: 0, bonusPoints: 0, joinedAt: new Date().toISOString() };
-      await saveParticipant(participant, mode);
+        const token = encodeToken({ id, name: n, club: String(club), gen });
+        participant = { id, name: n, club, sessionToken: token, gen, score: 0, correctCount: 0, wrongCount: 0, attemptCount: 0, correctResponseMs: 0, totalResponseMs: 0, fastestStreak: 0, bonusPoints: 0, joinedAt: new Date().toISOString() };
+        await saveParticipant(participant, mode);
+      } catch (err) {
+        // Roll the name claim back so a failed registration can retry.
+        await redisCommand(["SREM", keys.nameIndex, nameKey]).catch(() => {});
+        throw err;
+      }
+
+      // Realtime: announce the join + participant count, and publish the new
+      // state snapshot so every client updates without polling.
+      const count = (await redisCommand(["SCARD", keys.participantTokens])) || 0;
+      emitRealtime(mode, "participant:joined", {
+        name: n,
+        club: String(club),
+        participantsCount: Number(count) || 0,
+      });
+      await publishState(mode, state);
       res.json({ ok: true, participant });
     } catch (err: any) {
       res.status(400).json({ error: err.message || "Registration failed" });
@@ -2795,16 +3010,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
 
     // Quiz state with the same server-authoritative auto-transitions.
     let state: QuizSessionState;
-    const parsed = parseState(stateRaw as string | null);
-    if (!parsed) {
-      state = { ...DEFAULT_STATE };
-    } else {
-      const before = JSON.stringify(parsed);
-      state = applyAutoTransitions(parsed, mode);
-      if (JSON.stringify(state) !== before) {
-        await redis.set(keys.state, JSON.stringify(state));
-      }
-    }
+    state = await materializeState(mode, parseState(stateRaw as string | null));
 
     const currentQ = getQuestion(state.currentQuestionId, mode);
     // hasSubmitted / userSubmission come straight from the participant record
@@ -2934,16 +3140,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
       }
 
       // Quiz state with the same server-authoritative auto-transitions.
-      let state = parseState(stateRaw as string | null);
-      if (!state) {
-        state = { ...DEFAULT_STATE };
-      } else {
-        const before = JSON.stringify(state);
-        state = applyAutoTransitions(state, mode);
-        if (JSON.stringify(state) !== before) {
-          await redis.set(keys.state, JSON.stringify(state));
-        }
-      }
+      let state = await materializeState(mode, parseState(stateRaw as string | null));
       if (state.status !== "LIVE") return res.status(400).json({ error: "Question is not live" });
 
       const currentQ = getQuestion(state.currentQuestionId, mode);
@@ -3044,6 +3241,19 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
         cmds3.push(["INCRBY", keys.clubScore(participant.club), clubGain]);
       }
       await redisPipeline(cmds3);
+
+      // Realtime: notify admin/display clients a submission landed (no
+      // correctness/points — those stay hidden until reveal) and push the
+      // updated club scores so leaderboards move instantly.
+      emitRealtime(mode, "participant:submitted", {
+        participantId: participant.id,
+        participantName: participant.name,
+        club: participant.club,
+        answer: a,
+        questionNumber: currentQ.questionNumber,
+        responseTimeMs,
+      });
+      await publishClubScores(mode);
 
       res.json({
         ok: true,

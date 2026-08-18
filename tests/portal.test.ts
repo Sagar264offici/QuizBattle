@@ -128,31 +128,29 @@ describe("Student portal gate (open/close registration)", () => {
     expect(test.status).toBe(200);
   });
 
-  it("test portal caps membership at 60 (PORTAL_FULL) without touching the live portal", async () => {
+  it("test portal has NO artificial membership cap — students join beyond 60 without touching the live portal", async () => {
     await api("/test/admin/open-portal", { method: "POST", headers: adminHeaders, body: "{}" });
 
-    // Fill the test portal to its 60-member cap, one registration at a time.
-    for (let i = 0; i < 60; i++) {
+    // Register 70 test students (past the old 60-member cap) — every one must
+    // be accepted. Capacity is infrastructure-dependent, never hard-coded.
+    for (let i = 0; i < 70; i++) {
       const res = await api("/test/participants/register", {
         method: "POST",
         headers: jsonHeaders,
-        body: JSON.stringify({ name: `Cap Member ${i + 1}`, club: i % 2 === 0 ? "STACK_PUSH" : "IT_INNOVATORS" }),
+        body: JSON.stringify({ name: `Beyond Cap ${i + 1}`, club: i % 2 === 0 ? "STACK_PUSH" : "IT_INNOVATORS" }),
       });
       expect(res.status).toBe(200);
     }
 
-    // The 61st test student is rejected with a clear PORTAL_FULL message.
-    const sixtyFirst = await api("/test/participants/register", {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({ name: "Over The Cap", club: "STACK_PUSH" }),
-    });
-    expect(sixtyFirst.status).toBe(403);
-    const data = await sixtyFirst.json();
-    expect(data.code).toBe("PORTAL_FULL");
-    expect(data.error).toContain("60");
+    // All 70 are counted.
+    const summary = await (await api("/test/admin/summary", { headers: adminHeaders })).json();
+    expect(summary.participantsCount).toBe(70);
 
-    // The live portal has no such cap — a live registration still succeeds.
+    // The live portal is untouched by the test registrations.
+    const liveSummary = await (await api("/admin/summary", { headers: adminHeaders })).json();
+    expect(liveSummary.participantsCount).toBe(0);
+
+    // A live registration still succeeds independently.
     await api("/admin/open-portal", { method: "POST", headers: adminHeaders, body: "{}" });
     const live = await register("Live Untouched", "STACK_PUSH");
     expect(live.status).toBe(200);

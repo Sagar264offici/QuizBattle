@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Footer from "../components/Footer";
 import { fetchJson, type QuizMode } from "../services/api";
+import { useRealtime } from "../services/realtime";
+import BackgroundFX from "../components/BackgroundFX";
+import CinematicControls from "../components/CinematicControls";
 
 export interface Member {
   id: number;
@@ -97,33 +100,57 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   const lastDataRef = useRef<string>("");
 
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const data = await fetchJson<MembersResponse>("/api/admin/members", undefined, mode);
-        if (cancelled) return;
-        const key = JSON.stringify(data.participants);
-        if (key !== lastDataRef.current) {
-          lastDataRef.current = key;
-          setMembers(data.participants || []);
-        }
-        setQuizStatus(data.status || "PREPARING");
-        setLoading(false);
-        setError("");
-      } catch (err: any) {
-        if (cancelled) return;
-        setError(err?.message || "Failed to load members");
-        setLoading(false);
+  const loadMembers = async () => {
+    try {
+      const data = await fetchJson<MembersResponse>("/api/admin/members", undefined, mode);
+      const key = JSON.stringify(data.participants);
+      if (key !== lastDataRef.current) {
+        lastDataRef.current = key;
+        setMembers(data.participants || []);
       }
-    };
-    void poll();
-    const interval = setInterval(poll, 3000);
+      setQuizStatus(data.status || "PREPARING");
+      setLoading(false);
+      setError("");
+    } catch (err: any) {
+      setError(err?.message || "Failed to load members");
+      setLoading(false);
+    }
+  };
+
+  // Coalesced refresh — realtime events (joins/leaves/submissions) can burst,
+  // so bursts collapse into one members fetch instead of N.
+  const refreshScheduledRef = useRef(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefresh = (delayMs = 300) => {
+    if (refreshScheduledRef.current) return;
+    refreshScheduledRef.current = true;
+    refreshTimerRef.current = setTimeout(() => {
+      refreshScheduledRef.current = false;
+      void loadMembers();
+    }, delayMs);
+  };
+
+  useRealtime({
+    mode,
+    resync: () => void loadMembers(),
+    // Fallback cadence while the socket is disconnected (Vercel/outages).
+    pollMs: 5000,
+    heartbeatMs: 20000,
+    onState: () => scheduleRefresh(400),
+    onJoined: (p) => {
+      if (p.name) scheduleRefresh();
+    },
+    onLeft: (p) => {
+      if (p.name) scheduleRefresh();
+    },
+    onSubmitted: () => scheduleRefresh(),
+  });
+
+  useEffect(() => {
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
-  }, [mode]);
+  }, []);
 
   const visibleMembers = useMemo(
     () =>
@@ -173,6 +200,8 @@ export default function MembersPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   return (
     <div className="app-shell">
+      <BackgroundFX />
+      <CinematicControls compact />
       <div className="container">
         <div className="admin-header-bar">
           <div className="quiz-brand" style={{ margin: 0 }}>

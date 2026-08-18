@@ -2,8 +2,12 @@ import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Footer from "../components/Footer";
 import QuestionText from "../components/QuestionText";
+import TimerRing from "../components/TimerRing";
+import BackgroundFX from "../components/BackgroundFX";
+import CinematicControls from "../components/CinematicControls";
 import { fetchJson, isSessionExpired, isParticipantKicked, type QuizMode } from "../services/api";
-import { socket } from "../socket";
+import { useRealtime, type QuizStateEvent } from "../services/realtime";
+import { sfx } from "../lib/sound";
 
 interface Participant {
   id: number;
@@ -148,6 +152,17 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     IT_INNOVATORS: 0,
   });
 
+  // Live participant count — driven by realtime events, never polled.
+  const [participantsCount, setParticipantsCount] = useState(0);
+  // Subtle participant activity toast (+1 / disconnected) — event-driven.
+  const [participantToast, setParticipantToast] = useState<string | null>(null);
+  const participantToastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showParticipantToast = (msg: string) => {
+    setParticipantToast(msg);
+    if (participantToastRef.current) clearTimeout(participantToastRef.current);
+    participantToastRef.current = setTimeout(() => setParticipantToast(null), 2600);
+  };
+
   // 🏆 Winners (top 3) — fetched when the quiz finishes so students see the
   // podium right on their phone the moment the winner is declared.
   const [topStudents, setTopStudents] = useState<Array<{
@@ -161,7 +176,14 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   // A question is only shown after the host actually starts it. On first
   // login / reload a leftover or stale question NEVER appears — the student
   // stays on "WAITING FOR HOST TO START" until a countdown start is observed.
-  const [quizStarted, setQuizStarted] = useState(false);  const observedIdleRef = useRef(false);
+  const [quizStarted, setQuizStarted] = useState(false);
+
+  // Cinematic question intro — a fast ROUND → QUESTION reveal overlay when a
+  // new question begins. Short (≈1.2s) so the question stays readable fast.
+  const [questionIntro, setQuestionIntro] = useState<{ roundName: string; questionNumber: number } | null>(null);
+  const introTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const observedIdleRef = useRef(false);
   const lastQuestionIdRef = useRef<number | null>(null);
   const sessionRequestRef = useRef(0);
   const sessionRequestInFlightRef = useRef(false);
@@ -323,65 +345,132 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     } catch (_) {}
   };
 
-  useEffect(() => {
-    if (sessionToken) {
-      syncSession(sessionToken);
-      syncLeaderboard();
+  // Realtime synchronization — single path. The socket delivers every state
+  // change as an event (applied locally, no refetch); REST is used only for
+  // the initial sync, reconnect recovery, and the slow disconnected fallback
+  // (Vercel/outages). No per-second polling anywhere.
+  useRealtime({
+    mode,
+    // Initial sync + reconnect recovery + fallback heartbeat. The student
+    // portal (join form) only needs the portal-open flag, so it resyncs the
+    // lightweight quiz-state endpoint instead of the session poll.
+    resync: () => {
+      if (sessionToken) {
+        syncSession(sessionToken);
+        syncLeaderboard();
+      } else {
+        void checkPortal();
+      }
+    },
+    // Disconnected fallback cadence (unchanged from the old poll cadence so
+    // Vercel behaves exactly as before); connected mode uses the 30s
+    // heartbeat safety net instead.
+    pollMs:
+      status === "LOCKED" ? 3000 :
+      status === "COUNTDOWN" ? 5000 :
+      status === "LIVE" ? 10000 :
+      status === "WAITING" || status === "REVEALED" ? 8000 :
+      15000,
+    onState: (payload) => applyRealtimeState(payload),
+    onLeaderboard: (payload) => {
+      if (payload.clubs) {
+        setClubScores({
+          STACK_PUSH: payload.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
+          IT_INNOVATORS: payload.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
+        });
+      }
+      if (payload.topStudents) setTopStudents(payload.topStudents);
+    },
+    onJoined: (p) => {
+      if (p.participantsCount !== undefined) setParticipantsCount(p.participantsCount);
+      if (p.name) {
+        showParticipantToast(`+1 PARTICIPANT — ${p.name}`);
+        sfx.participantJoined();
+      }
+    },
+    onLeft: (p) => {
+      if (p.participantsCount !== undefined) setParticipantsCount(p.participantsCount);
+      if (p.name) showParticipantToast(`PARTICIPANT DISCONNECTED — ${p.name}`);
+    },
+  });
+
+  // Apply a pushed quiz:state snapshot to local state — mirrors the relevant
+  // parts of syncSession() without any network fetch.
+  const applyRealtimeState = (payload: QuizStateEvent) => {
+    const session = payload?.session;
+    if (!session) return;
+    setLastSyncedAt(Date.now());
+    setConnectionStale(false);
+
+    const newStatus = session.status ?? "WAITING";
+    // Refresh the top-3 widget only when the answer is revealed.
+    const prevStatus = prevStatusRef.current;
+    prevStatusRef.current = newStatus;
+    if (newStatus === "REVEALED" && prevStatus !== "REVEALED") syncLeaderboard();
+    if (newStatus === "FINISHED" && prevStatus !== "FINISHED") syncLeaderboard();
+
+    setStatus(newStatus);
+    // A question may only be shown after the host actually starts it.
+    if (newStatus === "PREPARING" || newStatus === "WAITING") observedIdleRef.current = true;
+    if (newStatus === "COUNTDOWN" || (newStatus === "LIVE" && observedIdleRef.current)) setQuizStarted(true);
+
+    // Cinematic intro + sound when a fresh question starts (COUNTDOWN).
+    if (newStatus === "COUNTDOWN" && session.currentQuestionId) {
+      const q = (payload.currentQuestion ?? null) as Question | null;
+      if (q && q.id !== lastQuestionIdRef.current) {
+        setQuestionIntro({ roundName: q.roundName, questionNumber: q.questionNumber });
+        sfx.questionStart();
+        if (introTimerRef.current) clearTimeout(introTimerRef.current);
+        introTimerRef.current = setTimeout(() => setQuestionIntro(null), 1400);
+      }
     }
 
-    // Polling cadence is tuned so the free Redis tier can serve a full live
-    // event. The countdown/GO reveal and the question timer are CLIENT-TIMED
-    // from absolute server timestamps, so slowing polls never delays the
-    // actual question — every device still sees it at the exact same moment.
-    // Fast polling is reserved for transitions only the host can trigger:
-    //   LOCKED  → poll fast (1.5s) to catch the host's REVEAL quickly
-    //   COUNTDOWN → poll briskly (3s) to preload the upcoming question
-    //   WAITING/REVEALED → moderate (5s); the host's START is announced and
-    //     even a late catch still delivers the question with correct timing
-    //   LIVE → slow safety net (10s); the timer, lock-in, and score are all
-    //     driven client-side + by the submit response
-    //   PREPARING/FINISHED → very slow (10s)
-    const pollMs =
-      status === "LOCKED" ? 1500 :
-      status === "COUNTDOWN" ? 3000 :
-      status === "LIVE" ? 10000 :
-      status === "WAITING" || status === "REVEALED" ? 5000 :
-      10000;
-    const interval = setInterval(() => {
-      if (sessionToken) syncSession(sessionToken);
-    }, pollMs);
+    setCountdownEndsAt(session.countdownEndsAt ?? null);
+    setQuestionEndsAt(session.questionEndsAt ?? null);
+    setCorrectAnswer(session.correctAnswer ?? null);
+    if (session.durationSeconds) setDurationSeconds(session.durationSeconds);
+    if (session.portalOpen !== undefined) setPortalOpen(session.portalOpen);
 
-    socket.on("quiz:state", () => {
-      if (sessionToken) syncSession(sessionToken);
-      syncLeaderboard();
-    });
+    // Question change: restore the locally cached answer for the new question
+    // and clear the previous question's submission state.
+    const q = (payload.currentQuestion ?? null) as Question | null;
+    if (q && q.id !== lastQuestionIdRef.current) {
+      lastQuestionIdRef.current = q.id;
+      const cached = loadCachedAnswer();
+      setSelectedAnswer(cached?.questionId === q.id ? cached.answer : null);
+      setHasSubmitted(false);
+    }
+    setQuestion((current) => (current?.id === q?.id ? current : q));
 
-    return () => {
-      clearInterval(interval);
-      socket.off("quiz:state");
-    };
-  }, [sessionToken, status]);
+    if (payload.clubs) {
+      setClubScores({
+        STACK_PUSH: payload.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
+        IT_INNOVATORS: payload.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
+      });
+    }
+    if (payload.participantsCount !== undefined) setParticipantsCount(payload.participantsCount);
+    // Sound cues on state transitions (opt-in; silent by default).
+    if (newStatus === "REVEALED") {
+      const mine = selectedAnswer;
+      if (mine && session.correctAnswer) sfx[mine === session.correctAnswer ? "correct" : "wrong"]();
+    }
+    if (newStatus === "FINISHED") sfx.finished();
+  };
+
+
 
   // While the join form is shown, watch the portal status so students see
-  // "portal closed — wait for the host" instead of guessing.
-  useEffect(() => {
-    if (participant) return;
-    let cancelled = false;
-    const checkPortal = async () => {
-      try {
-        const data = await fetchJson<{ session?: { portalOpen?: boolean } }>("/api/quiz-state", undefined, mode);
-        if (!cancelled && data.session) {
-          setPortalOpen((cur) => (cur === (data.session!.portalOpen !== false) ? cur : data.session!.portalOpen !== false));
-        }
-      } catch (_) {}
-    };
-    checkPortal();
-    const interval = setInterval(checkPortal, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [participant, mode]);
+  // "portal closed — wait for the host" instead of guessing. Event-driven via
+  // the realtime layer (quiz:state carries portalOpen); this direct check is
+  // only used as the initial fetch / disconnected fallback.
+  const checkPortal = async () => {
+    try {
+      const data = await fetchJson<{ session?: { portalOpen?: boolean } }>("/api/quiz-state", undefined, mode);
+      if (data.session) {
+        setPortalOpen((cur) => (cur === (data.session!.portalOpen !== false) ? cur : data.session!.portalOpen !== false));
+      }
+    } catch (_) {}
+  };
 
   // Connection-stale indicator: if the server hasn't confirmed state within the
   // last few poll cycles, surface it clearly instead of showing stale quiz data.
@@ -574,6 +663,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
     setErrorMessage("");
     setHasSubmitted(true);
     saveCachedAnswer({ questionId: question.id, answer: selectedAnswer, submitted: true });
+    sfx.answerLock();
 
     try {
       const res = await fetchJson<{
@@ -641,6 +731,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   if (isSessionLoading) {
     return (
       <div className="app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <BackgroundFX />
+        <CinematicControls compact />
         <div style={{ textAlign: "center", color: "var(--text-muted)" }}>
           <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>⚡</div>
           <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>Connecting to Battle Arena...</div>
@@ -654,6 +746,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
   if (!participant) {
     return (
       <div className="app-shell">
+        <BackgroundFX />
+        <CinematicControls compact />
         <div className="container-sm" style={{ marginTop: "30px", marginBottom: "40px" }}>
           <div className="glass-card" style={{ padding: "24px" }}>
             {sessionEndedMessage && (
@@ -928,6 +1022,19 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   return (
     <div className="app-shell">
+      <BackgroundFX />
+      <CinematicControls compact />
+
+      {/* Cinematic question intro — ROUND → QUESTION reveal. Plays during the
+          first second of the 5s countdown (countdownRemaining 5 or null for the
+          first tick), so the full 4→3→2→1 is still visible after it fades. */}
+      {questionIntro && (countdownRemaining === null || countdownRemaining >= 5) && (
+        <div className="question-intro-overlay" key={questionIntro.questionNumber}>
+          <div className="intro-round">{questionIntro.roundName}</div>
+          <div className="intro-question">QUESTION {questionIntro.questionNumber}</div>
+        </div>
+      )}
+
       {/* 5-Second Question Appearing Countdown Overlay (5 → 4 → 3 → 2 → 1 → GO!) */}
       {(countdownRemaining !== null && countdownRemaining > 0) || showGo ? (
         <div className="countdown-overlay">
@@ -951,6 +1058,13 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
       {bonusToast > 0 && (
         <div className="bonus-toast">
           🔥 BONUS +{bonusToast} PTS — 3 FASTEST CORRECT IN A ROW!
+        </div>
+      )}
+
+      {/* Participant activity toast — live join/leave feedback */}
+      {participantToast && (
+        <div className="participant-toast">
+          <span className="pulse-dot" /> {participantToast}
         </div>
       )}
 
@@ -1025,17 +1139,34 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
               </button>
             </div>
           </div>
+          {/* Live participants — event-driven count, never polled */}
+          <div className="live-participants-pill">
+            <span className="pulse-dot" /> LIVE PARTICIPANTS
+            <span className="live-count">{participantsCount} ONLINE</span>
+          </div>
         </div>
 
-        {/* Live Club Scores Bar */}
-        <div className="score-banner" style={{ marginBottom: "18px" }}>
-          <div className="score-card stack">
-            <div className="score-card-title">⚡ Stack.push</div>
-            <div className="score-card-points">{clubScores.STACK_PUSH}</div>
+        {/* Club vs Club battle bar — animated head-to-head score */}
+        <div className="club-battle-bar" style={{ marginBottom: "18px" }}>
+          <div className="battle-club stack">
+            <span className="battle-club-name">⚡ Stack.push</span>
+            <span className="battle-club-score">{clubScores.STACK_PUSH}</span>
           </div>
-          <div className="score-card innovators">
-            <div className="score-card-title">🚀 IT Innovators</div>
-            <div className="score-card-points">{clubScores.IT_INNOVATORS}</div>
+          <div className="battle-track">
+            <div
+              className="battle-fill stack-fill"
+              style={{
+                width: `${(() => {
+                  const total = clubScores.STACK_PUSH + clubScores.IT_INNOVATORS;
+                  return total === 0 ? 50 : Math.round((clubScores.STACK_PUSH / total) * 100);
+                })()}%`,
+              }}
+            />
+            <div className="battle-vs">VS</div>
+          </div>
+          <div className="battle-club innovators">
+            <span className="battle-club-name">🚀 IT Innovators</span>
+            <span className="battle-club-score">{clubScores.IT_INNOVATORS}</span>
           </div>
         </div>
 
@@ -1089,45 +1220,19 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 </div>
               )}
 
-              {/* 30-Second Live Question Timer Bar */}
+              {/* Cinematic circular countdown — runs client-side from the
+                  server's authoritative questionEndsAt. Zero Redis traffic. */}
               {status === "LIVE" && questionRemaining !== null && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                    background: questionRemaining <= 5 ? "rgba(239, 68, 68, 0.2)" : "rgba(30, 41, 59, 0.75)",
-                    border: `1.5px solid ${questionRemaining <= 5 ? "#ef4444" : "#3b82f6"}`,
-                    borderRadius: "10px",
-                    padding: "8px 14px",
-                    marginBottom: "14px",
-                    boxShadow: questionRemaining <= 5 ? "0 0 15px rgba(239, 68, 68, 0.4)" : "none",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "1.2rem",
-                      fontWeight: 900,
-                      fontFamily: "var(--font-mono)",
-                      color: questionRemaining <= 5 ? "#f87171" : "#38bdf8",
-                      minWidth: "65px",
-                    }}
-                  >
-                    ⏱️ {questionRemaining}s
+                <div className="timer-ring-row">
+                  <TimerRing remaining={questionRemaining} total={durationSeconds} label="SECONDS" />
+                  <div className="timer-ring-side">
+                    <div className="timer-ring-status">
+                      {questionRemaining <= 5 ? "CRITICAL" : questionRemaining <= durationSeconds * 0.25 ? "HURRY" : "LIVE"}
+                    </div>
+                    <div className="timer-ring-hint">
+                      {questionRemaining <= 5 ? "Final seconds — lock in now!" : `Answer within ${durationSeconds}s to score`}
+                    </div>
                   </div>
-                  <div style={{ flex: 1, background: "rgba(255,255,255,0.1)", borderRadius: "999px", height: "8px", overflow: "hidden" }}>
-                    <div
-                      style={{
-                        height: "100%",
-                        width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
-                        background: questionRemaining <= 5 ? "#ef4444" : "#3b82f6",
-                        transition: "width 0.1s linear",
-                      }}
-                    />
-                  </div>
-                  <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)" }}>
-                    {questionRemaining <= 5 ? "HURRY!" : `${durationSeconds}s Limit`}
-                  </span>
                 </div>
               )}
 
@@ -1165,6 +1270,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       onClick={() => {
                         if (status === "LIVE" && !hasSubmitted) {
                           setSelectedAnswer(key);
+                          sfx.answerSelect();
                         }
                       }}
                       disabled={status !== "LIVE" || hasSubmitted}

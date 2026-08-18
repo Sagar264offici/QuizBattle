@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import Footer from "../components/Footer";
 import QuestionText from "../components/QuestionText";
+import TimerRing from "../components/TimerRing";
+import BackgroundFX from "../components/BackgroundFX";
 import { fetchJson, type QuizMode } from "../services/api";
-import { socket } from "../socket";
+import { useRealtime, type QuizStateEvent } from "../services/realtime";
 
 interface Question {
   id: number;
@@ -55,6 +57,59 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
   const [topStudents, setTopStudents] = useState<TopStudent[]>([]);
   const [fastestTap, setFastestTap] = useState<FastestTap | null>(null);
 
+  // Realtime sync — one event-driven path. The socket pushes every state
+  // change (applied locally, zero Redis cost); REST is used only for the
+  // initial sync, reconnect recovery, and the slow disconnected fallback.
+  useRealtime({
+    mode,
+    resync: () => {
+      void syncState();
+    },
+    pollMs: 30000,
+    onState: (payload) => applyRealtimeState(payload),
+    onLeaderboard: (payload) => {
+      if (payload.clubs) {
+        setClubScores({
+          STACK_PUSH: payload.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
+          IT_INNOVATORS: payload.clubs.find((c) => c.name === "IT_INNOVATORS")?.score ?? 0,
+        });
+      }
+      if (payload.topStudents) setTopStudents(payload.topStudents);
+      if (payload.fastestTap !== undefined) setFastestTap(payload.fastestTap as FastestTap);
+    },
+    onReveal: (payload) => {
+      if (payload.correctAnswer) setCorrectAnswer(payload.correctAnswer);
+      setStatus("REVEALED");
+    },
+  });
+
+  // Apply a pushed quiz:state snapshot locally — mirrors syncState() without
+  // any network fetch.
+  const applyRealtimeState = (payload: QuizStateEvent) => {
+    const session = payload?.session;
+    const curQ = (payload?.currentQuestion ?? null) as Question | null;
+    if (session) {
+      setStatus(session.status ?? "WAITING");
+      setCorrectAnswer(session.correctAnswer ?? null);
+      setCountdownEndsAt(session.countdownEndsAt ?? null);
+      setQuestionEndsAt(session.questionEndsAt ?? null);
+      if (session.durationSeconds) setDurationSeconds(session.durationSeconds);
+    }
+    setQuestion((current) => (current?.id === curQ?.id ? current : curQ));
+
+    // Track previous question answer for the projector banner.
+    const answer = session?.correctAnswer;
+    if (answer && curQ && (session?.status === "REVEALED" || session?.status === "WAITING" || session?.status === "LIVE")) {
+      setPrevAnswer((prev) => {
+        if (session?.status === "REVEALED" && answer) {
+          return { questionNumber: curQ.questionNumber, correctAnswer: answer, optionA: curQ.optionA, optionB: curQ.optionB, optionC: curQ.optionC, optionD: curQ.optionD };
+        }
+        if (prev && curQ.questionNumber !== prev.questionNumber) return prev;
+        return prev;
+      });
+    }
+  };
+
   const syncState = async () => {
     try {
       const [stateData, leaderboardData] = await Promise.all([
@@ -75,30 +130,10 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           fastestTap?: FastestTap | null;
         }>("/api/leaderboard", undefined, mode),
       ]);
-
-      // Track previous question answer for projector display
-      if (stateData.session.correctAnswer && stateData.currentQuestion && 
-          (stateData.session.status === "REVEALED" || stateData.session.status === "WAITING" || stateData.session.status === "LIVE")) {
-        setPrevAnswer((prev) => {
-          const curQ = stateData.currentQuestion!;
-          const curAnswer = stateData.session.correctAnswer;
-          // Store when we're in REVEALED state, or when question changes
-          if (stateData.session.status === "REVEALED" && curAnswer) {
-            return { questionNumber: curQ.questionNumber, correctAnswer: curAnswer, optionA: curQ.optionA, optionB: curQ.optionB, optionC: curQ.optionC, optionD: curQ.optionD };
-          }
-          // If question changed and we have a previous answer, keep showing it
-          if (prev && curQ.questionNumber !== prev.questionNumber) return prev;
-          return prev;
-        });
-      }
-
-      setStatus(stateData.session.status);
-      setQuestion(stateData.currentQuestion);
-      setCorrectAnswer(stateData.session.correctAnswer);
-      setCountdownEndsAt(stateData.session.countdownEndsAt);
-      setQuestionEndsAt(stateData.session.questionEndsAt);
-      if (stateData.session.durationSeconds) setDurationSeconds(stateData.session.durationSeconds);
-
+      applyRealtimeState({
+        session: stateData.session,
+        currentQuestion: stateData.currentQuestion as unknown as Record<string, unknown> | null,
+      });
       if (leaderboardData.clubs) {
         setClubScores({
           STACK_PUSH: leaderboardData.clubs.find((c) => c.name === "STACK_PUSH")?.score ?? 0,
@@ -111,21 +146,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
   };
 
   useEffect(() => {
-    syncState();
-    // 2s cadence — the projector is a single client, but every poll costs
-    // Redis commands, so it stays modest to protect the free-tier quota.
-    const interval = setInterval(syncState, 2000);
-    socket.on("quiz:state", syncState);
-    socket.on("leaderboard:update", syncState);
-    socket.on("display:reveal", (data) => {
-      if (data.correctAnswer) setCorrectAnswer(data.correctAnswer);
-      setStatus("REVEALED");
-    });
-    return () => {
-      clearInterval(interval);
-      socket.off("quiz:state");
-      socket.off("leaderboard:update");
-    };
+    void syncState();
   }, []);
 
   // 5s Appearing Countdown tick (5 → 4 → 3 → 2 → 1 → GO!)
@@ -172,6 +193,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
 
   return (
     <div className="projector-shell">
+      <BackgroundFX />
       {/* 5-Second Fullscreen Projector Countdown */}
       {(countdownRemaining !== null && countdownRemaining > 0) || showGo ? (
         <div className="countdown-overlay">
@@ -225,15 +247,25 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* Question State Display */}
           {question && (status === "LIVE" || status === "LOCKED" || status === "REVEALED") ? (
             <div>
-              {/* Dynamic Live Timer Bar (15s / 30s / 45s per question) */}
+              {/* Cinematic circular countdown (large — projector readable) */}
               {status === "LIVE" && questionRemaining !== null && (
-                <div style={{ marginTop: "16px", background: "rgba(255,255,255,0.08)", borderRadius: "999px", height: "10px", overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%",
-                    width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
-                    background: questionRemaining <= 5 ? "#ef4444" : "#3b82f6",
-                    transition: "width 0.2s linear",
-                  }} />
+                <div className="projector-timer-row">
+                  <TimerRing remaining={questionRemaining} total={durationSeconds} label="SECONDS" size={150} />
+                  <div className="projector-timer-digits">
+                    <div className={questionRemaining <= 5 ? "timer-ring-status critical" : "timer-ring-status"}>
+                      {questionRemaining <= 5 ? "CRITICAL" : "LIVE"}
+                    </div>
+                    <div className="projector-timer-bar">
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
+                          background: questionRemaining <= 5 ? "#ef4444" : "#3b82f6",
+                          transition: "width 0.2s linear",
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -449,6 +481,22 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               )}
             </div>
             <div className="score-card-points" style={{ fontSize: "3.5rem", lineHeight: 1.1, marginTop: "6px" }}>{clubScores.IT_INNOVATORS}</div>
+          </div>
+
+          {/* Head-to-head battle track — animated score proportion */}
+          <div className="glass-card" style={{ padding: "10px 14px" }}>
+            <div className="battle-track" style={{ marginBottom: 0 }}>
+              <div
+                className="battle-fill stack-fill"
+                style={{
+                  width: `${(() => {
+                    const total = clubScores.STACK_PUSH + clubScores.IT_INNOVATORS;
+                    return total === 0 ? 50 : Math.round((clubScores.STACK_PUSH / total) * 100);
+                  })()}%`,
+                }}
+              />
+              <div className="battle-vs">VS</div>
+            </div>
           </div>
 
           {/* ⚡ FASTEST TAP — speed counts toward the winner ranking */}
