@@ -37,13 +37,13 @@ interface Participant {
 }
 
 // Server-authoritative per-question answer window — mirrors questionDurationSeconds
-// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-20=15s,
-// Q21-50=30s.
+// in api/index.ts. Live: Q1-40=15s, Q41-80=30s, Q81+=45s. Test: Q1-40=15s,
+// Q41-50=25s, Q51-70=30s.
 function durationForQuestion(questionNumber: number, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    if (n >= 1 && n <= 20) return 15;
-    if (n >= 21 && n <= 40) return 30;
+    if (n >= 1 && n <= 40) return 15;
+    if (n >= 41 && n <= 50) return 25;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;
@@ -340,7 +340,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    background: "linear-gradient(to top, rgba(3, 7, 18, 0.95), transparent)",
+                    background: "rgba(3, 7, 18, 0.85)",
                     padding: "12px 10px 6px",
                   }}
                 >
@@ -429,7 +429,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {mode === "live" && (
               <a href="/admin/test" className="btn btn-warning btn-sm">
-                🧪 Open Test Mode
+                Open Test Mode
               </a>
             )}
             {mode === "test" && (
@@ -441,20 +441,20 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
               href={mode === "test" ? "/admin/test/members" : "/admin/members"}
               className="btn btn-secondary btn-sm"
             >
-              👥 Members / Participant Details
+              Members / Participant Details
             </a>
             <a
               href={mode === "test" ? "/test/results" : "/results"}
               className="btn btn-warning btn-sm"
               title="Final ranking with each student's total timing + top-3 PNG certificates"
             >
-              🏆 Results & Certificates
+              Results & Certificates
             </a>
             <button className="btn btn-secondary btn-sm" onClick={copyStudentLink}>
-              📋 Copy Student Link
+              Copy Student Link
             </button>
             <a href={mode === "test" ? "/test/display" : "/display"} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
-              📺 Projector Screen ↗
+              Projector Screen ↗
             </a>
             <button
               className="btn btn-secondary btn-sm"
@@ -481,7 +481,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "1rem", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 40 QUESTIONS · 4 ROUNDS (15s / 30s) — NOT THE LIVE COLLEGE QUIZ
+              TEST MODE — 70 QUESTIONS · 7 ROUNDS (15s / 25s / 30s) — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -514,7 +514,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
               {participantsCount}{mode === "test" ? " / 60" : ""}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "2px" }}>
-              🔵 {stackParticipants.length} Stack | 🟢 {innovatorsParticipants.length} Innovators
+              {stackParticipants.length} Stack · {innovatorsParticipants.length} Innovators
             </div>
           </div>
 
@@ -526,12 +526,12 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           </div>
 
           <div className="score-card stack">
-            <div className="score-card-title">⚡ Stack.push</div>
+            <div className="score-card-title">Stack.push</div>
             <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>{stackScore}</div>
           </div>
 
           <div className="score-card innovators">
-            <div className="score-card-title">🚀 IT Innovators</div>
+            <div className="score-card-title">IT Innovators</div>
             <div className="score-card-points" style={{ fontSize: "1.8rem", marginTop: "2px" }}>{innovScore}</div>
           </div>
         </div>
@@ -549,7 +549,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "1.1rem", fontWeight: 900 }}>🚪 Student Portal</span>
+                <span style={{ fontSize: "1.1rem", fontWeight: 900 }}>Student Portal</span>
                 <span
                   className="badge"
                   style={{
@@ -557,8 +557,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     border: `1px solid ${portalOpen ? "#10b981" : "#f59e0b"}`,
                     color: portalOpen ? "#4ade80" : "#fcd34d",
                   }}
-                >
-                  {portalOpen ? "🟢 OPEN" : "🔴 CLOSED"}
+                >                    {portalOpen ? "OPEN" : "CLOSED"}
                 </span>
               </div>
               <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "4px" }}>
@@ -582,7 +581,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
               }
               disabled={actionLoading}
             >
-              {portalOpen ? "🔒 Close the Portal" : "🟢 Open the Portal"}
+              {portalOpen ? "Close the Portal" : "Open the Portal"}
             </button>
           </div>
         </div>
@@ -603,7 +602,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "1.1rem", fontWeight: 900 }}>🧪 Test Portal</span>
+                  <span style={{ fontSize: "1.1rem", fontWeight: 900 }}>Test Portal</span>
                   <span
                     className="badge"
                     style={{
@@ -612,7 +611,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                       color: testPortalOpen ? "#fcd34d" : "#94a3b8",
                     }}
                   >
-                    {testPortalOpen ? "🟢 OPEN (TEST)" : "🔴 CLOSED (TEST)"}
+                    {testPortalOpen ? "OPEN (TEST)" : "CLOSED (TEST)"}
                   </span>
                 </div>
                 <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "4px" }}>
@@ -625,7 +624,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 onClick={toggleTestPortal}
                 disabled={actionLoading}
               >
-                {testPortalOpen ? "🔒 Close Test Portal" : "🧪 Open Test Portal"}
+                {testPortalOpen ? "Close Test Portal" : "Open Test Portal"}
               </button>
             </div>
           </div>
@@ -686,7 +685,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                       style={{
                         height: "100%",
                         width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
-                        background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
+                        background: questionRemaining <= 5 ? "#ef4444" : "#3b82f6",
                         transition: "width 0.2s linear",
                       }}
                     />
@@ -723,7 +722,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                   onClick={() => runHostAction("/api/admin/start-countdown", { questionNumber: currentQNum }, "⏱️ 5-Second Countdown Started!")}
                   disabled={actionLoading || status === "LIVE" || status === "COUNTDOWN" || status === "LOCKED"}
                 >
-                  {status === "PREPARING" ? "▶ START QUIZ (5s Timer)" : "⏱️ START QUESTION (5s Timer)"}
+                  {status === "PREPARING" ? "START QUIZ (5s Timer)" : "START QUESTION (5s Timer)"}
                 </button>
 
                 <button
@@ -732,7 +731,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                   onClick={() => runHostAction("/api/admin/lock-answers", {}, "🔒 Answers Locked")}
                   disabled={actionLoading || status !== "LIVE"}
                 >
-                  🔒 LOCK ANSWERS
+                  LOCK ANSWERS
                 </button>
 
                 <button
@@ -741,7 +740,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                   onClick={() => runHostAction("/api/admin/reveal-answer", {}, "👁️ Answer Revealed to all!")}
                   disabled={actionLoading || (status !== "LOCKED" && status !== "LIVE")}
                 >
-                  👁️ REVEAL ANSWER
+                  REVEAL ANSWER
                 </button>
 
                 <button
@@ -750,13 +749,13 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                   onClick={() => runHostAction("/api/admin/next-question", {}, "➡️ Next Question")}
                   disabled={actionLoading}
                 >
-                  ➡️ NEXT QUESTION
+                  NEXT QUESTION
                 </button>
               </div>
 
               {/* Teacher Testing Zone */}
               <div className="danger-zone-box">
-                <div className="danger-zone-title">⚡ Teacher Testing & Clear Center</div>
+                <div className="danger-zone-title">Teacher Testing & Clear Center</div>
                 <p style={{ fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "12px" }}>
                   Reset scores anytime before or after demonstrating to your teacher.
                 </p>
@@ -770,7 +769,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     }}
                     disabled={actionLoading}
                   >
-                    🔄 Clear Responses & Scores (Keep Students)
+                    Clear Responses & Scores (Keep Students)
                   </button>
                   <button
                     className="btn btn-danger btn-sm"
@@ -781,7 +780,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     }}
                     disabled={actionLoading}
                   >
-                    ⚠️ Complete Fresh Wipe ({mode === "test" ? "Test Mode" : "Live Mode"})
+                    Complete Fresh Wipe ({mode === "test" ? "Test Mode" : "Live Mode"})
                   </button>
                   <button
                     className="btn btn-danger btn-sm"
@@ -792,14 +791,14 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                     }}
                     disabled={actionLoading}
                   >
-                    🏁 End Quiz
+                    End Quiz
                   </button>
                 </div>
               </div>
 
               {/* Student Session Controls */}
               <div className="danger-zone-box" style={{ marginTop: "14px" }}>
-                <div className="danger-zone-title">🚪 Student Session Controls</div>
+                <div className="danger-zone-title">Student Session Controls</div>
                 <p style={{ fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "12px" }}>
                   {mode === "test"
                     ? "Immediately log out every test student. Old test sessions become invalid on the server."
@@ -823,7 +822,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                   disabled={actionLoading}
                   style={{ fontWeight: 900 }}
                 >
-                  {mode === "test" ? "🚪 Log Out All Test Students" : "🚪 Log Out All Students"}
+                  {mode === "test" ? "Log Out All Test Students" : "Log Out All Students"}
                 </button>
               </div>
             </div>
@@ -897,7 +896,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="glass-card" style={{ marginTop: "18px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>
-                  👥 Live Joined Students Roster ({participantsCount})
+                  Live Joined Students Roster ({participantsCount})
                 </h3>
               </div>
 
@@ -905,7 +904,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 {/* Stack.push Roster */}
                 <div style={{ background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.3)", borderRadius: "10px", padding: "14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <span style={{ fontWeight: 800, color: "#60a5fa" }}>⚡ Stack.push ({stackParticipants.length})</span>
+                    <span style={{ fontWeight: 800, color: "#60a5fa" }}>Stack.push ({stackParticipants.length})</span>
                     <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#fbbf24" }}>{stackScore} pts</span>
                   </div>
                   {stackParticipants.length === 0 ? (
@@ -963,7 +962,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
                 {/* IT Innovators Roster */}
                 <div style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "10px", padding: "14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <span style={{ fontWeight: 800, color: "#34d399" }}>🚀 IT Innovators ({innovatorsParticipants.length})</span>
+                    <span style={{ fontWeight: 800, color: "#34d399" }}>IT Innovators ({innovatorsParticipants.length})</span>
                     <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#fbbf24" }}>{innovScore} pts</span>
                   </div>
                   {innovatorsParticipants.length === 0 ? (
@@ -1026,7 +1025,7 @@ export default function AdminPage({ mode = "live" }: { mode?: QuizMode } = {}) {
             <div className="glass-card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Question Browser</h3>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "40 Questions · 15s/30s" : "100 Questions"}</span>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{mode === "test" ? "70 Questions · 15s/25s/30s" : "100 Questions"}</span>
               </div>
 
               <div className="round-filter-tabs">

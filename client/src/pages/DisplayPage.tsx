@@ -181,7 +181,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
             <div className="countdown-number" style={{ fontSize: "12rem" }}>{countdownRemaining}</div>
           )}
           <div className="countdown-label" style={{ fontSize: "2.5rem" }}>
-            ⚡ READY FOR BATTLE — QUESTION {question?.questionNumber || 1}! ⚡
+            READY FOR BATTLE — QUESTION {question?.questionNumber || 1}
           </div>
         </div>
       ) : null}
@@ -202,7 +202,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   color: mode === "test" ? "#030712" : undefined,
                 }}
               >
-                {mode === "test" ? "TEST MODE — 40 QUESTIONS" : "IT CLUB BATTLE"}
+                {mode === "test" ? "TEST MODE — 70 QUESTIONS" : "IT CLUB BATTLE"}
               </span>
               <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#e2e8f0" }}>
                 {question?.roundName || "Round 1"}
@@ -231,14 +231,14 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   <div style={{
                     height: "100%",
                     width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
-                    background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
+                    background: questionRemaining <= 5 ? "#ef4444" : "#3b82f6",
                     transition: "width 0.2s linear",
                   }} />
                 </div>
               )}
 
               <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "#38bdf8", marginTop: "20px" }}>
-                QUESTION {question.questionNumber} OF {mode === "test" ? 40 : 100}
+                QUESTION {question.questionNumber} OF {mode === "test" ? 70 : 100}
               </div>
               <QuestionText className="projector-question-text" text={question.questionText} />
 
@@ -266,9 +266,8 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   marginTop: "18px",
                   padding: "14px 18px",
                   borderRadius: "12px",
-                  background: "linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(6, 182, 212, 0.1))",
-                  border: "1.5px solid rgba(16, 185, 129, 0.4)",
-                  boxShadow: "0 0 20px rgba(16, 185, 129, 0.15)",
+                  background: "rgba(16, 185, 129, 0.12)",
+                  border: "2px solid #10b981",
                 }}>
                   <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "#34d399", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "6px" }}>
                     ✓ PREVIOUS ANSWER — Q{prevAnswer.questionNumber}
@@ -288,7 +287,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
             /* 🏆 FINISHED — projector shows the winner podium */
             <div style={{ textAlign: "center", padding: "40px 24px" }}>
               <h1 style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-1px" }}>
-                🏆 QUIZ BATTLE FINISHED!
+                QUIZ BATTLE FINISHED!
               </h1>
               <p style={{ fontSize: "1.2rem", color: "var(--text-muted)", marginTop: "10px" }}>
                 Winner declared — congratulations to all champions!
@@ -308,10 +307,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                       padding: "16px 44px",
                       borderRadius: "18px",
                       border: `3px solid ${champion ? championColor : "#fbbf24"}`,
-                      background: champion
-                        ? `linear-gradient(135deg, ${championColor}26, rgba(255,255,255,0.03))`
-                        : "rgba(251, 191, 36, 0.12)",
-                      boxShadow: champion ? `0 0 40px ${championColor}55` : "0 0 30px rgba(251, 191, 36, 0.25)",
+                      background: champion ? `${championColor}1f` : "rgba(251, 191, 36, 0.12)",
                     }}
                   >
                     <div style={{ fontSize: "3rem", lineHeight: 1 }}>
@@ -339,12 +335,8 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                         width: 250,
                         padding: "18px 14px",
                         borderRadius: "16px",
-                        background:
-                          idx === 0
-                            ? "linear-gradient(160deg, rgba(251, 191, 36, 0.18), rgba(245, 158, 11, 0.05))"
-                            : "rgba(255,255,255,0.04)",
-                        border: idx === 0 ? "2px solid rgba(251, 191, 36, 0.5)" : "1px solid rgba(255,255,255,0.1)",
-                        boxShadow: idx === 0 ? "0 0 30px rgba(251, 191, 36, 0.2)" : "none",
+                        background: idx === 0 ? "rgba(251, 191, 36, 0.16)" : "rgba(255,255,255,0.04)",
+                        border: idx === 0 ? "2px solid #fbbf24" : "1px solid rgba(255,255,255,0.1)",
                       }}
                     >
                       <div style={{ fontSize: "3.2rem", lineHeight: 1 }}>{podiumEmojis[idx]}</div>
@@ -375,7 +367,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                   boxShadow: "0 0 30px rgba(245, 158, 11, 0.35)",
                 }}
               >
-                🏆 VIEW FINAL RESULTS — TOP 3 + CERTIFICATES
+                VIEW FINAL RESULTS — TOP 3 + CERTIFICATES
               </a>
             </div>
           ) : (
@@ -397,7 +389,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
               />
               <h1 style={{ fontSize: "2.4rem", fontWeight: 900, letterSpacing: "-1px" }}>
                 {status === "PREPARING"
-                  ? "✨ BE PATIENT — HOST IS PREPARING"
+                  ? "BE PATIENT — HOST IS PREPARING"
                   : "GET READY FOR THE NEXT BATTLE QUESTION"}
               </h1>
               <p style={{ fontSize: "1.2rem", color: "var(--text-muted)", marginTop: "12px" }}>
@@ -414,7 +406,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* 📱 SCAN TO JOIN — QR code to the live quiz */}
           <div className="glass-card" style={{ padding: "16px 18px", textAlign: "center", border: "1.5px solid rgba(59, 130, 246, 0.4)", boxShadow: "0 0 25px rgba(59, 130, 246, 0.2)" }}>
             <div style={{ fontSize: "0.8rem", color: "#38bdf8", textTransform: "uppercase", fontWeight: 800, letterSpacing: "1px", marginBottom: "10px" }}>
-              📱 Scan to Join the Battle
+              Scan to Join the Battle
             </div>
             <div style={{ display: "flex", justifyContent: "center" }}>
               <div style={{ background: "#ffffff", padding: "10px", borderRadius: "12px", display: "inline-block" }}>
@@ -436,7 +428,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
             borderWidth: isStackLeading ? "3px" : "1.5px",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div className="score-card-title" style={{ fontSize: "1rem" }}>⚡ STACK.PUSH</div>
+              <div className="score-card-title" style={{ fontSize: "1rem" }}>STACK.PUSH</div>
               {isStackLeading && (
                 <span style={{ fontSize: "0.8rem", fontWeight: 900, color: "#fbbf24", background: "rgba(245, 158, 11, 0.2)", padding: "3px 8px", borderRadius: "6px" }}>★ LEADER</span>
               )}
@@ -451,7 +443,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
             borderWidth: isInnovatorsLeading ? "3px" : "1.5px",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div className="score-card-title" style={{ fontSize: "1rem" }}>🚀 IT INNOVATORS</div>
+              <div className="score-card-title" style={{ fontSize: "1rem" }}>IT INNOVATORS</div>
               {isInnovatorsLeading && (
                 <span style={{ fontSize: "0.8rem", fontWeight: 900, color: "#fbbf24", background: "rgba(245, 158, 11, 0.2)", padding: "3px 8px", borderRadius: "6px" }}>★ LEADER</span>
               )}
@@ -462,20 +454,18 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* ⚡ FASTEST TAP — speed counts toward the winner ranking */}
           <div className="glass-card" style={{ padding: "10px 16px", textAlign: "center", border: "1.5px solid rgba(251, 191, 36, 0.3)" }}>
             <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.5px" }}>
-              🏆 Winner Ranking = Correct Answers + Speed · 🔥 3 Fastest in a Row = Bonus
+              Winner Ranking = Correct Answers + Speed · 3 Fastest in a Row = Bonus
             </div>
           </div>
 
           {/* ⚡ FASTEST TAP */}
           <div className="glass-card" style={{
             padding: "16px 18px",
-            background: fastestTap
-              ? "linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(245, 158, 11, 0.06))"
-              : undefined,
-            border: fastestTap ? "1.5px solid rgba(251, 191, 36, 0.35)" : undefined,
+            background: fastestTap ? "rgba(251, 191, 36, 0.1)" : undefined,
+            border: fastestTap ? "2px solid #f59e0b" : undefined,
           }}>
             <div style={{ fontSize: "0.8rem", color: "#fbbf24", textTransform: "uppercase", fontWeight: 800, letterSpacing: "1px", marginBottom: "6px" }}>
-              ⚡ Fastest Correct Tap
+              Fastest Correct Tap
             </div>
             {fastestTap ? (
               <div>
@@ -500,7 +490,7 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
           {/* 🏆 TOP 3 STUDENTS (All-Time Podium) */}
           <div className="glass-card" style={{ padding: "16px 18px" }}>
             <div style={{ fontSize: "0.8rem", color: "#38bdf8", textTransform: "uppercase", fontWeight: 800, letterSpacing: "1px", marginBottom: "10px" }}>
-              🏆 Top 3 Students
+              Top 3 Students
             </div>
             {topStudents.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -511,10 +501,8 @@ export default function DisplayPage({ mode = "live" }: { mode?: QuizMode } = {})
                     gap: "10px",
                     padding: "8px 10px",
                     borderRadius: "10px",
-                    background: idx === 0
-                      ? "linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(245, 158, 11, 0.05))"
-                      : "rgba(255, 255, 255, 0.04)",
-                    border: idx === 0 ? "1px solid rgba(251, 191, 36, 0.3)" : "1px solid rgba(255,255,255,0.06)",
+                    background: idx === 0 ? "rgba(251, 191, 36, 0.14)" : "rgba(255, 255, 255, 0.04)",
+                    border: idx === 0 ? "1px solid #f59e0b" : "1px solid rgba(255,255,255,0.06)",
                     transition: "all 0.4s ease",
                   }}>
                     <span style={{ fontSize: "1.5rem", width: "32px", textAlign: "center" }}>{podiumEmojis[idx]}</span>

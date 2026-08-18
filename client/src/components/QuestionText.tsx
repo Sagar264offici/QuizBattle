@@ -2,8 +2,12 @@ import React from "react";
 
 /**
  * Renders question text with proper code formatting.
- * Detects "Guess the Output" style questions where the text after the
- * prompt is code and wraps it in a styled <pre> block.
+ *
+ * Detects "Guess The Output"-style questions — the prompt line followed by
+ * code on the next lines ("What is the output?\n…", "What will be the
+ * output?\n…", "How many times does the following loop print?\n…") — and
+ * renders the code part in a styled <pre> block. Everything else renders as
+ * plain text.
  */
 export default function QuestionText({
   text,
@@ -14,9 +18,9 @@ export default function QuestionText({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  // Detect code-style questions: "What will be the output?\n..."
+  // Prompt line + code (everything after the first line break).
   const codeMatch = text.match(
-    /^(What will be the output\??\s*\n)([\s\S]+)$/i,
+    /^(What (?:is|will be) the output\??\s*\n|How many times does the following loop print\??\s*\n)([\s\S]+)$/i,
   );
 
   if (codeMatch) {
@@ -24,23 +28,8 @@ export default function QuestionText({
     return (
       <div className={className} style={style}>
         <span>{prompt.trimEnd()}</span>
-        <pre
-          style={{
-            marginTop: "10px",
-            padding: "12px 16px",
-            background: "rgba(0, 0, 0, 0.35)",
-            borderRadius: "8px",
-            border: "1px solid rgba(120, 140, 180, 0.15)",
-            fontFamily:
-              "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-            fontSize: "0.92em",
-            lineHeight: "1.6",
-            whiteSpace: "pre",
-            color: "#e2e8f0",
-            overflowX: "auto",
-          }}
-        >
-          {code.trimEnd()}
+        <pre className="code-block">
+          <code>{code.trim()}</code>
         </pre>
       </div>
     );

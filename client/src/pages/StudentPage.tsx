@@ -685,7 +685,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 }}
               >
                 <span style={{ fontWeight: 900, color: "#fcd34d", fontSize: "0.95rem", letterSpacing: "0.5px" }}>
-                  🧪 TEST MODE — 40 QUESTIONS · 4 ROUNDS — NOT THE LIVE COLLEGE QUIZ
+                  TEST MODE — 70 QUESTIONS · 7 ROUNDS — NOT THE LIVE COLLEGE QUIZ
                 </span>
               </div>
             )}
@@ -718,8 +718,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                   position: "relative",
                   borderRadius: "16px",
                   overflow: "hidden",
-                  border: "2px solid rgba(59, 130, 246, 0.4)",
-                  boxShadow: "0 0 30px rgba(59, 130, 246, 0.25)",
+                  border: "2px solid #3b82f6",
                   marginBottom: "16px",
                 }}
               >
@@ -740,28 +739,27 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    background: "linear-gradient(to top, rgba(3, 7, 18, 0.95), transparent)",
+                    background: "rgba(3, 7, 18, 0.85)",
                     padding: "16px 12px 8px",
                   }}
                 >
                   <span
                     className="brand-badge"
                     style={{
-                      background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+                      background: "#2563eb",
                       color: "#ffffff",
                       fontWeight: 900,
                       letterSpacing: "1.5px",
                       fontSize: "0.85rem",
-                      boxShadow: "0 0 15px rgba(37, 99, 235, 0.5)",
                     }}
                   >
-                    ⚡ ARE YOU READY FOR BATTLE? ⚡
+                    ARE YOU READY FOR BATTLE?
                   </span>
                 </div>
               </div>
 
               <div className="glossy-badge" style={{ display: "inline-block", marginBottom: "8px" }}>
-                ⚡ TECHNICAL BATTLE ⚡
+                TECHNICAL BATTLE
               </div>
               <h1 className="brand-title battle-title" style={{ fontSize: "1.9rem", margin: "6px 0 4px" }}>
                 {mode === "test" ? "IT Club Championship — TEST MODE" : "IT Club Championship"}
@@ -772,7 +770,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <span className="vs-side vs-innovators">🚀 IT Innovators</span>
               </div>
               <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "6px" }}>
-                {mode === "test" ? "60-Question Tech Battle — 3 Rounds · Speed + Accuracy = Victory" : "Live Tech Battle — Speed + Accuracy = Victory"}
+                {mode === "test" ? "70-Question Tech Battle — 7 Rounds · Speed + Accuracy = Victory" : "Live Tech Battle — Speed + Accuracy = Victory"}
               </p>
             </div>
 
@@ -887,7 +885,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       DO NOT OPEN THIS UNLESS THE HOST/ORGANIZER HAS TOLD YOU TO.
                     </p>
                     <p style={{ marginTop: "8px", fontWeight: 700, color: "#fbbf24" }}>
-                      🎯 The test battle has 40 questions in 4 rounds — 25s / 30s.
+                      The test battle has 70 questions in 7 rounds — 15s / 25s / 30s.
                       Winners are decided by correct answers AND speed, with 🔥 bonus points for 3
                       fastest-in-a-row. Anti-AI secure mode is ON.
                     </p>
@@ -938,7 +936,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
           ) : (
             <div className="countdown-number">{countdownRemaining}</div>
           )}
-          <div className="countdown-label">⚡ GET READY FOR QUESTION {question?.questionNumber || 1}! ⚡</div>
+          <div className="countdown-label">GET READY FOR QUESTION {question?.questionNumber || 1}</div>
         </div>
       ) : null}
 
@@ -976,7 +974,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
             }}
           >
             <span style={{ fontWeight: 900, color: "#fcd34d", letterSpacing: "1px" }}>
-              🧪 TEST MODE — 40 QUESTIONS · 4 ROUNDS — NOT THE LIVE COLLEGE QUIZ
+              TEST MODE — 70 QUESTIONS · 7 ROUNDS — NOT THE LIVE COLLEGE QUIZ
             </span>
           </div>
         )}
@@ -1069,7 +1067,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
               {/* 🛡️ secure badge — shown while a question is live */}
               {status === "LIVE" && (
                 <div className="secure-mode-badge">
-                  🛡️ SECURE MODE — NO COPY · NO TAB-SWITCH · FULLSCREEN · WATERMARKED
+                  SECURE MODE — NO COPY · NO TAB-SWITCH · FULLSCREEN · WATERMARKED
                 </div>
               )}
 
@@ -1122,7 +1120,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       style={{
                         height: "100%",
                         width: `${Math.min(100, Math.max(0, (questionRemaining / durationSeconds) * 100))}%`,
-                        background: questionRemaining <= 5 ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #10b981)",
+                        background: questionRemaining <= 5 ? "#ef4444" : "#3b82f6",
                         transition: "width 0.1s linear",
                       }}
                     />
@@ -1135,7 +1133,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
 
               {/* Question Text Box */}
               <div className="question-text-box">
-                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 40 : 100}</div>
+                <div className="question-num-tag">Question {question.questionNumber} of {mode === "test" ? 70 : 100}</div>
                 <QuestionText className="question-main-text" text={question.questionText} />
               </div>
 
@@ -1187,7 +1185,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                     disabled={!selectedAnswer || submitting}
                     style={{ padding: "16px", fontSize: "1.1rem" }}
                   >
-                    {submitting ? "Submitting..." : selectedAnswer ? `⚔️ LOCK IN OPTION ${selectedAnswer} →` : "Select an Option Above to Submit"}
+                    {submitting ? "Submitting..." : selectedAnswer ? `LOCK IN OPTION ${selectedAnswer} →` : "Select an Option Above to Submit"}
                   </button>
                 )}
 
@@ -1219,7 +1217,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       fontWeight: 800,
                     }}
                   >
-                    🔒 {durationSeconds} Seconds are up! Answers locked by host.
+                    {durationSeconds} Seconds are up! Answers locked by host.
                   </div>
                 )}
 
@@ -1238,9 +1236,9 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                   >
                     <div style={{ fontSize: "1.2rem", fontWeight: 800, color: selectedAnswer === correctAnswer ? "#86efac" : "#fca5a5" }}>
                       {selectedAnswer === correctAnswer
-                        ? `🎉 CORRECT! +${question.points} Points Earned!`
+                        ? `CORRECT! +${question.points} Points Earned!`
                         : selectedAnswer
-                          ? `❌ Incorrect! Correct Answer was Option ${correctAnswer}`
+                          ? `Incorrect! Correct Answer was Option ${correctAnswer}`
                           : `Correct Answer: Option ${correctAnswer}`}
                     </div>
                   </div>
@@ -1264,7 +1262,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                 <div className="pulse-ring" />
                 <div className="preparing-clock">⏳</div>
               </div>
-              <h2 className="preparing-title">Be Patient ✨</h2>
+              <h2 className="preparing-title">Be Patient</h2>
               <p className="preparing-sub">Host is preparing everything.</p>
               <p className="preparing-sub2">Your quiz will begin shortly.</p>
               <div className="animated-dots" aria-label="waiting">
@@ -1298,9 +1296,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                       padding: "12px 14px",
                       borderRadius: "12px",
                       border: `2px solid ${champion ? championColor : "#fbbf24"}`,
-                      background: champion
-                        ? `linear-gradient(135deg, ${championColor}22, rgba(255,255,255,0.03))`
-                        : "rgba(251, 191, 36, 0.1)",
+                      background: champion ? `${championColor}1f` : "rgba(251, 191, 36, 0.1)",
                     }}
                   >
                     <div style={{ fontWeight: 900, fontSize: "1.05rem", color: champion ? championColor : "#fbbf24" }}>
@@ -1327,11 +1323,8 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                         gap: "12px",
                         padding: "10px 12px",
                         borderRadius: "12px",
-                        background:
-                          idx === 0
-                            ? "linear-gradient(135deg, rgba(251, 191, 36, 0.16), rgba(245, 158, 11, 0.05))"
-                            : "rgba(255,255,255,0.04)",
-                        border: idx === 0 ? "1.5px solid rgba(251, 191, 36, 0.4)" : "1px solid rgba(255,255,255,0.08)",
+                        background: idx === 0 ? "rgba(251, 191, 36, 0.14)" : "rgba(255,255,255,0.04)",
+                        border: idx === 0 ? "1.5px solid #f59e0b" : "1px solid rgba(255,255,255,0.08)",
                       }}
                     >
                       <span style={{ fontSize: "1.8rem" }}>{["🥇", "🥈", "🥉"][idx]}</span>
@@ -1359,7 +1352,7 @@ export default function StudentPage({ mode = "live" }: { mode?: QuizMode } = {})
                   : " — thanks for battling!"}
               </div>
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "14px" }}>
-                🏅 Certificate winners are announced by the host.
+                Certificate winners are announced by the host.
               </p>
             </div>
           ) : (

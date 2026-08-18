@@ -124,7 +124,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
       mode,
       eventName:
         mode === "test"
-          ? "IT Club Championship — TEST MODE · 60 Questions"
+          ? "IT Club Championship — TEST MODE · 70 Questions"
           : "IT Club Championship — Technical Battle",
     });
   };
@@ -198,7 +198,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                 href={mode === "test" ? "/admin/test" : "/admin"}
                 style={{ color: "var(--text-dim)", fontSize: "0.85rem", textDecoration: "none", fontWeight: 600 }}
               >
-                ⚙️ Back to Host Dashboard →
+                Back to Host Dashboard →
               </a>
             </div>
           </div>
@@ -226,7 +226,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
               ↩ Back to {mode === "test" ? "Test" : "Live"} Admin
             </a>
             <a href={mode === "test" ? "/test/display" : "/display"} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
-              📺 Projector Screen ↗
+              Projector Screen ↗
             </a>
           </div>
         </div>
@@ -240,11 +240,11 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
         {/* Club score summary */}
         <div className="score-banner" style={{ marginBottom: "18px" }}>
           <div className="score-card stack">
-            <div className="score-card-title">⚡ Stack.push</div>
+            <div className="score-card-title">Stack.push</div>
             <div className="score-card-points">{stackScore}</div>
           </div>
           <div className="score-card innovators">
-            <div className="score-card-title">🚀 IT Innovators</div>
+            <div className="score-card-title">IT Innovators</div>
             <div className="score-card-points">{innovScore}</div>
           </div>
         </div>
@@ -252,7 +252,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
         {fastestTap && (
           <div className="glass-card" style={{ marginBottom: "18px", padding: "14px 18px", border: "1.5px solid rgba(251, 191, 36, 0.35)" }}>
             <div style={{ fontSize: "0.75rem", color: "#fbbf24", textTransform: "uppercase", fontWeight: 800, letterSpacing: "1px", marginBottom: "4px" }}>
-              ⚡ Fastest Correct Tap of the Battle
+              Fastest Correct Tap of the Battle
             </div>
             <div style={{ fontSize: "1.15rem", fontWeight: 900 }}>
               {fastestTap.participantName}{" "}
@@ -268,7 +268,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
         {/* 🏆 TOP 3 PODIUM */}
         <div className="glass-card" style={{ marginBottom: "18px" }}>
           <h2 style={{ fontSize: "1.35rem", fontWeight: 900, margin: "0 0 4px", textAlign: "center" }}>
-            🏆 TOP 3 CHAMPIONS
+            TOP 3 CHAMPIONS
           </h2>
           <p style={{ textAlign: "center", color: "var(--text-muted)", margin: "0 0 18px", fontSize: "0.9rem" }}>
             Certificate-ready winners — ranked by score, then correct answers, then speed
@@ -286,14 +286,11 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                   <div
                     key={s.id}
                     style={{
-                      background: isFirst
-                        ? "linear-gradient(160deg, rgba(251, 191, 36, 0.16), rgba(245, 158, 11, 0.05))"
-                        : "rgba(255,255,255,0.04)",
-                      border: `2px solid ${isFirst ? "rgba(251, 191, 36, 0.55)" : "rgba(255,255,255,0.1)"}`,
+                      background: isFirst ? "rgba(251, 191, 36, 0.14)" : "rgba(255,255,255,0.04)",
+                      border: `2px solid ${isFirst ? "#fbbf24" : "rgba(255,255,255,0.1)"}`,
                       borderRadius: "16px",
                       padding: "20px 16px",
                       textAlign: "center",
-                      boxShadow: isFirst ? "0 0 30px rgba(251, 191, 36, 0.18)" : "none",
                     }}
                   >
                     <div style={{ fontSize: "3.2rem", lineHeight: 1 }}>{MEDALS[idx]}</div>
@@ -318,7 +315,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
                       onClick={() => void downloadOne(s, (idx + 1) as 1 | 2 | 3)}
                       title={`Download ${s.name}'s PNG certificate`}
                     >
-                      🖼️ Download Certificate (PNG)
+                      Download Certificate (PNG)
                     </button>
                   </div>
                 );
@@ -336,7 +333,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
               >
                 {downloading
                   ? "Generating certificates..."
-                  : "🎖️ Generate Certificates for Leaderboard (1st · 2nd · 3rd)"}
+                  : "Generate Certificates for Leaderboard (1st · 2nd · 3rd)"}
               </button>
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "10px" }}>
                 Creates 3 certificates — the leaderboard's exact top 3, any mix of clubs, on the official college template.
@@ -349,7 +346,7 @@ export default function ResultsPage({ mode = "live" }: { mode?: QuizMode } = {})
         <div className="glass-card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
             <h3 style={{ fontSize: "1.15rem", fontWeight: 900, margin: 0 }}>
-              📊 Full Ranking — Total Timing by Answer Submitted ({students.length})
+              Full Ranking — Total Timing by Answer Submitted ({students.length})
             </h3>
           </div>
 

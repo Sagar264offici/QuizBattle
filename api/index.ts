@@ -1547,21 +1547,20 @@ const FASTEST_STREAK_BONUS = 5;
  *   Q41–80   → 30s (core rounds)
  *   Q81–100  → 45s (hackathon challenge finale)
  *
- * TEST quiz (40 questions, IT & Reasoning set):
- *   Q1–10    → 25s (ROUND 1 — Guess The Output)
- *   Q11–20   → 30s (ROUND 2 — Probability)
- *   Q21–30   → 30s (ROUND 3 — Logical Reasoning)
- *   Q31–40   → 30s (ROUND 4 — Mathematical Reasoning)
+ * TEST quiz (70 questions, 7 rounds):
+ *   Q1–40    → 15s (ROUNDS 1–4 — GK rounds, 1 pt)
+ *   Q41–50   → 25s (ROUND 5 — Guess The Output, 2 pts)
+ *   Q51–70   → 30s (ROUNDS 6–7 — Reasoning & Puzzles, 2–3 pts)
  *
  * Unknown/future question numbers fall back to the default 30s.
  */
 function questionDurationSeconds(questionNumber: number | null | undefined, mode: QuizMode = "live"): number {
   const n = Number(questionNumber) || 0;
   if (mode === "test") {
-    // Guess The Output (Q1-10): 25s, Probability (Q11-20): 30s,
-    // Logical Reasoning (Q21-30): 30s, Mathematical Reasoning (Q31-40): 30s
-    if (n >= 1 && n <= 10) return 25;
-    if (n >= 11 && n <= 40) return 30;
+    // GK rounds (Q1-40): 15s, Guess The Output (Q41-50): 25s,
+    // Logical/Mathematical Reasoning + Hard Puzzles (Q51-70): 30s
+    if (n >= 1 && n <= 40) return 15;
+    if (n >= 41 && n <= 50) return 25;
     return 30;
   }
   if (n >= 1 && n <= 40) return 15;

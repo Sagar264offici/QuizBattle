@@ -5,7 +5,7 @@ import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData";
 import { QUESTIONS } from "../server/src/data/questionsData";
 import { ApiError, isSessionExpired } from "../client/src/services/api";
 
-describe("Test mode — 40-question isolated quiz + global student logout", () => {
+describe("Test mode — 70-question isolated quiz + global student logout", () => {
   let server: http.Server;
   let baseUrl: string;
 
@@ -39,18 +39,22 @@ describe("Test mode — 40-question isolated quiz + global student logout", () =
   });
 
   // ── 1. Question set ─────────────────────────────────────────────────────────
-  it("test quiz contains exactly 40 questions across 4 rounds and no other questions", () => {
-    expect(TEST_QUESTIONS).toHaveLength(40);
+  it("test quiz contains exactly 70 questions across 7 rounds and no other questions", () => {
+    expect(TEST_QUESTIONS).toHaveLength(70);
     expect(TEST_QUESTIONS.map((q) => q.questionNumber)).toEqual(
-      Array.from({ length: 40 }, (_, i) => i + 1),
+      Array.from({ length: 70 }, (_, i) => i + 1),
     );
-    // Round structure: Q1-10 (1pt), Q11-20 (1pt), Q21-30 (2pt), Q31-40 (3pt)
+    // Round structure: Q1-40 GK (1pt each), Q41-60 Output + Reasoning (2pt),
+    // Q61-70 Hard Puzzles (3pt)
     const rounds = new Set(TEST_QUESTIONS.map((q) => q.roundId));
-    expect(rounds).toEqual(new Set([1, 2, 3, 4]));
+    expect(rounds).toEqual(new Set([1, 2, 3, 4, 5, 6, 7]));
     expect(TEST_QUESTIONS.filter((q) => q.roundId === 1 && q.points === 1)).toHaveLength(10);
     expect(TEST_QUESTIONS.filter((q) => q.roundId === 2 && q.points === 1)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 3 && q.points === 2)).toHaveLength(10);
-    expect(TEST_QUESTIONS.filter((q) => q.roundId === 4 && q.points === 3)).toHaveLength(10);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 3 && q.points === 1)).toHaveLength(10);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 4 && q.points === 1)).toHaveLength(10);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 5 && q.points === 2)).toHaveLength(10);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 6 && q.points === 2)).toHaveLength(10);
+    expect(TEST_QUESTIONS.filter((q) => q.roundId === 7 && q.points === 3)).toHaveLength(10);
   });
 
   // ── 2. ID isolation ─────────────────────────────────────────────────────────
