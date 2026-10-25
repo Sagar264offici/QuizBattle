@@ -33,6 +33,9 @@
         "source": "**",
         "destination": "/index.html"
       }
+    ],
+    "predeploy": [
+      "npm --prefix \"$PROJECT_DIR\" run build"
     ]
   }
 }
