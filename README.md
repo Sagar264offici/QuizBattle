@@ -80,7 +80,7 @@ The API state is persisted in Firebase Realtime Database and shared across reque
 
 - Never commit `.env`, service-account JSON files, Upstash tokens, or production admin passwords.
 - Production admin authentication fails closed when `ADMIN_PASSWORD` is not configured.
-- The local development-only password fallback must never be relied on in production.
+- There is no default admin password; set it in the local `.env` file or Firebase Secret Manager.
 - Firebase Admin access is server-side; do not make the `quizbattleRedis` data path publicly writable through client database rules.
 
 ## Legacy Upstash option
