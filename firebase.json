@@ -1,22 +1,16 @@
 {
   "functions": {
-    "source": ".",
+    "source": "functions",
     "runtime": "nodejs22",
     "ignore": [
-      ".git/**",
-      ".firebase/**",
       "node_modules/**",
-      "**/node_modules/**",
-      ".env",
-      ".env.*",
-      "*.db",
-      "*.db-journal",
-      "coverage/**",
+      ".git/**",
       "firebase-debug.log",
       "firebase-debug.*.log"
     ],
     "predeploy": [
-      "npm --prefix \"$RESOURCE_DIR\" run build"
+      "npm --prefix \"$PROJECT_DIR\" run build",
+      "rm -rf \"$RESOURCE_DIR/server-dist\" && cp -R \"$PROJECT_DIR/server/dist\" \"$RESOURCE_DIR/server-dist\""
     ],
     "codebase": "quizbattle"
   },
