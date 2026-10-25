@@ -45,7 +45,7 @@ Keep the Terminal process running. In local memory mode, participants and quiz s
 This branch adds Firebase Hosting and Cloud Functions configuration. The server uses Firebase Realtime Database as a shared state store under the isolated `quizbattleRedis` namespace. There is no need to manually enter the 50 questions in the Firebase console: they are deployed with the server code.
 
 1. Create or select a Firebase project in the [Firebase Console](https://console.firebase.google.com/).
-2. Create a **Realtime Database** in the same general region as the function (the function is configured for `asia-south1`, Mumbai). Confirm the project's runtime config includes the database URL.
+2. Use your existing **Realtime Database** at `https://quiz-dbaa4-default-rtdb.asia-southeast1.firebasedatabase.app`. The function is configured for `asia-southeast1` to match this database region.
 3. Enable billing for Cloud Functions if Firebase requires it for your project. Review the applicable Firebase and Google Cloud quotas/pricing before a live event.
 4. Install the Firebase CLI and sign in:
 
