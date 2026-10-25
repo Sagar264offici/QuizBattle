@@ -1065,15 +1065,12 @@ app.use((req, _res, next) => {
   express.json()(req, _res, next);
 });
 
-// A local-only default preserves the development workflow. Deployed environments
-// must explicitly configure ADMIN_PASSWORD; the value is read per request so a
-// Firebase Function Secret can be injected safely at runtime.
+// ADMIN_PASSWORD is read per request so a Firebase Function Secret can be
+// injected at runtime. No default password is accepted on any environment.
 let cachedAdminPassword = "";
 let cachedAdminHash = "";
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const expectedPassword =
-    process.env.ADMIN_PASSWORD ||
-    (process.env.NODE_ENV === "development" && !process.env.FIREBASE_CONFIG && !process.env.K_SERVICE ? "MadeBySagar" : "");
+  const expectedPassword = process.env.ADMIN_PASSWORD || "";
   if (!expectedPassword) {
     return res.status(503).json({ error: "Admin password is not configured on the server." });
   }
