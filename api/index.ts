@@ -94,8 +94,17 @@ function isUpstashQuotaErrorBody(text: string): boolean {
 
 async function redisCommand(cmd: (string | number)[]) {
   countRedisCommand(cmd);
-  // In-memory mode: dispatch to the local store — never touches Upstash.
+  // Firebase is the shared persistent store when selected for deployment.
+  if (firebaseStore) {
+    try {
+      return await firebaseStore.command(cmd);
+    } catch (err) {
+      console.error("Firebase state-store error:", err);
+      return REDIS_UNAVAILABLE;
+    }
+  }
   if (memoryStore) return memoryStore.command(cmd);
+  if (!REDIS_URL || !REDIS_TOKEN) return REDIS_UNAVAILABLE;
   try {
     const res = await fetch(REDIS_URL, {
       method: "POST",
