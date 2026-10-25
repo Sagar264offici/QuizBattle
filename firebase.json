@@ -26,7 +26,7 @@
         "source": "/api/**",
         "function": {
           "functionId": "quizApi",
-          "region": "asia-south1"
+          "region": "asia-southeast1"
         }
       },
       {
