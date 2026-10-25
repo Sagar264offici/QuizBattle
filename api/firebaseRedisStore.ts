@@ -54,17 +54,25 @@ export function createFirebaseRedisStore(): FirebaseRedisStore {
   const refFor = (key: string) => root.child(encode(key));
 
   async function getLive(ref: ReturnType<typeof root.child>): Promise<Entry | null> {
-    const result = await ref.transaction(
+    // Reads are ordinary reads, not no-op transactions; this avoids a write
+    // transaction for every student poll. Only expired records need cleanup.
+    const snapshot = await ref.once("value");
+    const entry = snapshot.val() as Entry | null;
+    if (!entry) return null;
+    if (isAlive(entry)) return entry;
+
+    // Delete an expired value only if it is still expired. If another request
+    // refreshes the key between the read and transaction, preserve that value.
+    const cleanup = await ref.transaction(
       (current: Entry | null) => {
-        if (!current) return null;
-        if (!isAlive(current)) return null;
+        if (!current || !isAlive(current)) return null;
         return current;
       },
       undefined,
       false,
     );
-    const entry = result.snapshot.val() as Entry | null;
-    return isAlive(entry) ? entry : null;
+    const refreshed = cleanup.snapshot.val() as Entry | null;
+    return isAlive(refreshed) ? refreshed : null;
   }
 
   async function mutate(
@@ -205,7 +213,7 @@ export function createFirebaseRedisStore(): FirebaseRedisStore {
             const current = isAlive(raw) ? raw : null;
             if (nx && current) {
               blocked = true;
-              return current;
+              return;
             }
             blocked = false;
             return {
