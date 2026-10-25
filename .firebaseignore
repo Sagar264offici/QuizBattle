@@ -1,0 +1,11 @@
+.git/
+.firebase/
+node_modules/
+**/node_modules/
+.env
+.env.*
+*.db
+*.db-journal
+coverage/
+firebase-debug.log
+firebase-debug.*.log

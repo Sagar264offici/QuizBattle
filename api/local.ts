@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 /**
  * Local boot entry for the quiz server.
  *

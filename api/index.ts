@@ -1,6 +1,7 @@
 /**
- * QuizBattle API — Upstash Redis-backed Vercel Serverless Handler
- * Uses @upstash/redis SDK for shared state across all serverless lambdas.
+ * QuizBattle API — shared quiz state with local-memory, Firebase RTDB, or
+ * explicitly configured Upstash REST storage. Firebase Functions use REST
+ * polling; the persistent Node server can attach Socket.IO for local/Cloud Run.
  */
 
 import fs from "node:fs";
@@ -10,6 +11,8 @@ import cors from "cors";
 import express from "express";
 import { TEST_QUESTIONS } from "../server/src/data/testQuestionsData.js";
 import { createMemoryStore } from "./memoryStore.js";
+import { createFirebaseRedisStore } from "./firebaseRedisStore.js";
+import { ROUNDS as STARFORGE_ROUNDS, QUESTIONS as STARFORGE_QUESTIONS } from "../server/src/data/questionsData.js";
 import {
   emitRealtime,
   realtimeClientCount,
@@ -35,1319 +38,8 @@ export interface RoundItem {
   pointValue: number;
 }
 
-export const ROUNDS: RoundItem[] = [
-  { "id": 1, "name": "ROUND 1 — EASY IT & GENERAL BASICS", "pointValue": 1 },
-  { "id": 2, "name": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY", "pointValue": 1 },
-  { "id": 3, "name": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS", "pointValue": 1 },
-  { "id": 4, "name": "ROUND 4 — HARD LOGIC & REASONING", "pointValue": 3 },
-  { "id": 5, "name": "ROUND 5 — HARD IT + LOGIC", "pointValue": 3 },
-];
-
-export const QUESTIONS: QuestionItem[] = [
-  {
-    "id": 1,
-    "questionNumber": 1,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which part of a computer performs arithmetic calculations?",
-    "optionA": "ALU",
-    "optionB": "RAM",
-    "optionC": "SSD",
-    "optionD": "BIOS",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 2,
-    "questionNumber": 2,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which device is primarily used to produce a paper copy of a digital file?",
-    "optionA": "Scanner",
-    "optionB": "Printer",
-    "optionC": "Webcam",
-    "optionD": "Router",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 3,
-    "questionNumber": 3,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "What does Ctrl + A normally do?",
-    "optionA": "Save all files",
-    "optionB": "Select all",
-    "optionC": "Close all",
-    "optionD": "Align text",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 4,
-    "questionNumber": 4,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which storage device has no moving mechanical disk?",
-    "optionA": "HDD",
-    "optionB": "SSD",
-    "optionC": "DVD",
-    "optionD": "Floppy disk",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 5,
-    "questionNumber": 5,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which file extension is commonly associated with a spreadsheet?",
-    "optionA": ".xlsx",
-    "optionB": ".mp4",
-    "optionC": ".psd",
-    "optionD": ".wav",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 6,
-    "questionNumber": 6,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which key is commonly used to cancel an operation or close a menu?",
-    "optionA": "Esc",
-    "optionB": "Tab",
-    "optionC": "Caps Lock",
-    "optionD": "Home",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 7,
-    "questionNumber": 7,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "What does HDMI commonly carry?",
-    "optionA": "Digital audio and video",
-    "optionB": "Electricity only",
-    "optionC": "Internet only",
-    "optionD": "Keyboard commands only",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 8,
-    "questionNumber": 8,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which device is used to project a computer display onto a large screen?",
-    "optionA": "Modem",
-    "optionB": "Projector",
-    "optionC": "Scanner",
-    "optionD": "UPS",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 9,
-    "questionNumber": 9,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which of these is an example of system software?",
-    "optionA": "Operating system",
-    "optionB": "Calculator document",
-    "optionC": "Photo",
-    "optionD": "Music file",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 10,
-    "questionNumber": 10,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "What does a UPS primarily provide?",
-    "optionA": "Backup power",
-    "optionB": "Faster internet",
-    "optionC": "More RAM",
-    "optionD": "Wireless networking",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 11,
-    "questionNumber": 11,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which unit is commonly used to measure processor speed?",
-    "optionA": "GHz",
-    "optionB": "Liter",
-    "optionC": "Volt",
-    "optionD": "Pixel",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 12,
-    "questionNumber": 12,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "What does GUI stand for?",
-    "optionA": "Graphical User Interface",
-    "optionB": "General Utility Internet",
-    "optionC": "Global User Integration",
-    "optionD": "Graphic Utility Input",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 13,
-    "questionNumber": 13,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which application is mainly used to play audio/video files?",
-    "optionA": "Media player",
-    "optionB": "Compiler",
-    "optionC": "Firewall",
-    "optionD": "BIOS",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 14,
-    "questionNumber": 14,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which technology is commonly used to connect wireless headphones to a phone?",
-    "optionA": "Bluetooth",
-    "optionB": "VGA",
-    "optionC": "Ethernet",
-    "optionD": "SATA",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 15,
-    "questionNumber": 15,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which symbol is commonly associated with a decimal point?",
-    "optionA": ".",
-    "optionB": "/",
-    "optionC": ":",
-    "optionD": ";",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 16,
-    "questionNumber": 16,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "What is the main purpose of a recycle bin/trash?",
-    "optionA": "Temporarily hold deleted files",
-    "optionB": "Increase storage",
-    "optionC": "Scan for viruses",
-    "optionD": "Compress files",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 17,
-    "questionNumber": 17,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which of these is measured in pixels?",
-    "optionA": "Screen resolution",
-    "optionB": "CPU speed",
-    "optionC": "Storage capacity",
-    "optionD": "Internet bandwidth",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 18,
-    "questionNumber": 18,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which device converts a digital signal to an analog signal for certain communication systems?",
-    "optionA": "Modem",
-    "optionB": "Keyboard",
-    "optionC": "Monitor",
-    "optionD": "Mouse",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 19,
-    "questionNumber": 19,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which key is generally used to move between fields in a form?",
-    "optionA": "Tab",
-    "optionB": "Alt",
-    "optionC": "Esc",
-    "optionD": "Spacebar",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 20,
-    "questionNumber": 20,
-    "roundId": 1,
-    "roundName": "ROUND 1 — EASY IT & GENERAL BASICS",
-    "points": 1,
-    "questionText": "Which of these is a common video-conferencing application?",
-    "optionA": "Microsoft Teams",
-    "optionB": "Notepad",
-    "optionC": "File Explorer",
-    "optionD": "Paint",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 21,
-    "questionNumber": 21,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which protocol is used to securely log into a remote computer through a command line?",
-    "optionA": "SSH",
-    "optionB": "SMTP",
-    "optionC": "POP3",
-    "optionD": "ARP",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 22,
-    "questionNumber": 22,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which protocol is commonly used to transfer files between computers?",
-    "optionA": "FTP",
-    "optionB": "DNS",
-    "optionC": "ICMP",
-    "optionD": "DHCP",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 23,
-    "questionNumber": 23,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What is the main purpose of a subnet mask?",
-    "optionA": "Identify the network and host portions of an IP address",
-    "optionB": "Encrypt passwords",
-    "optionC": "Increase bandwidth",
-    "optionD": "Store websites",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 24,
-    "questionNumber": 24,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which device forwards frames using MAC addresses?",
-    "optionA": "Router",
-    "optionB": "Switch",
-    "optionC": "Modem",
-    "optionD": "Repeater",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 25,
-    "questionNumber": 25,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What is the main purpose of a compiler?",
-    "optionA": "Translate source code into another form, often machine/executable code",
-    "optionB": "Browse websites",
-    "optionC": "Manage users",
-    "optionD": "Store databases",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 26,
-    "questionNumber": 26,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which data structure stores elements as key-value pairs?",
-    "optionA": "Dictionary/Map",
-    "optionB": "Stack",
-    "optionC": "Queue",
-    "optionD": "Array only",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 27,
-    "questionNumber": 27,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What does an else block normally handle?",
-    "optionA": "The alternative when an if condition is false",
-    "optionB": "Repeating a loop",
-    "optionC": "Defining a database",
-    "optionD": "Starting the operating system",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 28,
-    "questionNumber": 28,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What is the purpose of a return statement in a function?",
-    "optionA": "Send a value back to the caller",
-    "optionB": "Restart the computer",
-    "optionC": "Delete the function",
-    "optionD": "Create a variable automatically",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 29,
-    "questionNumber": 29,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "In programming, what is an index commonly used for?",
-    "optionA": "Accessing an element in a sequence",
-    "optionB": "Encrypting data",
-    "optionC": "Starting a server",
-    "optionD": "Formatting a disk",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 30,
-    "questionNumber": 30,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which SQL clause filters rows based on a condition?",
-    "optionA": "WHERE",
-    "optionB": "ORDER",
-    "optionC": "GROUP",
-    "optionD": "INTO",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 31,
-    "questionNumber": 31,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which SQL clause sorts query results?",
-    "optionA": "ORDER BY",
-    "optionB": "SORT USING",
-    "optionC": "ARRANGE",
-    "optionD": "SEQUENCE",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 32,
-    "questionNumber": 32,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What does COUNT() generally do in SQL?",
-    "optionA": "Counts rows/values",
-    "optionB": "Deletes rows",
-    "optionC": "Renames a table",
-    "optionD": "Encrypts records",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 33,
-    "questionNumber": 33,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What is a foreign key mainly used for?",
-    "optionA": "Linking related tables",
-    "optionB": "Encrypting a database",
-    "optionC": "Starting a server",
-    "optionD": "Creating a password",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 34,
-    "questionNumber": 34,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What is an IP address beginning with 127.0.0.1 commonly associated with?",
-    "optionA": "Loopback/local machine",
-    "optionB": "Broadcast network",
-    "optionC": "Public DNS",
-    "optionD": "Cloud server",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 35,
-    "questionNumber": 35,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which HTTP status code generally represents \"Internal Server Error\"?",
-    "optionA": "201",
-    "optionB": "302",
-    "optionC": "404",
-    "optionD": "500",
-    "correctAnswer": "D"
-  },
-  {
-    "id": 36,
-    "questionNumber": 36,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which HTTP status code usually indicates a resource was successfully created?",
-    "optionA": "201",
-    "optionB": "301",
-    "optionC": "401",
-    "optionD": "503",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 37,
-    "questionNumber": 37,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What does JSON primarily represent?",
-    "optionA": "Structured data",
-    "optionB": "Image pixels only",
-    "optionC": "Audio signals",
-    "optionD": "Operating-system kernels",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 38,
-    "questionNumber": 38,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which Git command creates a new local repository in the current folder?",
-    "optionA": "git init",
-    "optionB": "git start",
-    "optionC": "git make",
-    "optionD": "git repo",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 39,
-    "questionNumber": 39,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "Which Git command records staged changes?",
-    "optionA": "git save",
-    "optionB": "git commit",
-    "optionC": "git record",
-    "optionD": "git store",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 40,
-    "questionNumber": 40,
-    "roundId": 2,
-    "roundName": "ROUND 2 — MID-LEVEL IT & TECHNOLOGY",
-    "points": 1,
-    "questionText": "What is an API endpoint?",
-    "optionA": "A specific location through which an API can be accessed",
-    "optionB": "A computer's physical power button",
-    "optionC": "A database password",
-    "optionD": "A programming variable",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 41,
-    "questionNumber": 41,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which is the largest island in the world?",
-    "optionA": "Greenland",
-    "optionB": "Madagascar",
-    "optionC": "Borneo",
-    "optionD": "New Guinea",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 42,
-    "questionNumber": 42,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which country has the world's largest population of Muslims?",
-    "optionA": "Saudi Arabia",
-    "optionB": "Indonesia",
-    "optionC": "Iran",
-    "optionD": "Egypt",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 43,
-    "questionNumber": 43,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which country is famous for the ancient city of Machu Picchu?",
-    "optionA": "Peru",
-    "optionB": "Chile",
-    "optionC": "Brazil",
-    "optionD": "Bolivia",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 44,
-    "questionNumber": 44,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which is the deepest ocean trench known on Earth?",
-    "optionA": "Mariana Trench",
-    "optionB": "Tonga Trench",
-    "optionC": "Java Trench",
-    "optionD": "Puerto Rico Trench",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 45,
-    "questionNumber": 45,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which country is home to the Great Barrier Reef?",
-    "optionA": "Australia",
-    "optionB": "New Zealand",
-    "optionC": "Indonesia",
-    "optionD": "South Africa",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 46,
-    "questionNumber": 46,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which planet has the shortest year around the Sun?",
-    "optionA": "Mercury",
-    "optionB": "Venus",
-    "optionC": "Mars",
-    "optionD": "Earth",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 47,
-    "questionNumber": 47,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which gas makes up the largest portion of Earth's atmosphere?",
-    "optionA": "Oxygen",
-    "optionB": "Nitrogen",
-    "optionC": "Carbon dioxide",
-    "optionD": "Hydrogen",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 48,
-    "questionNumber": 48,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "What is the chemical symbol for gold?",
-    "optionA": "Gd",
-    "optionB": "Go",
-    "optionC": "Au",
-    "optionD": "Ag",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 49,
-    "questionNumber": 49,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which instrument measures atmospheric pressure?",
-    "optionA": "Barometer",
-    "optionB": "Thermometer",
-    "optionC": "Hygrometer",
-    "optionD": "Anemometer",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 50,
-    "questionNumber": 50,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which blood group is known as the universal donor for red blood cells?",
-    "optionA": "AB+",
-    "optionB": "O−",
-    "optionC": "A+",
-    "optionD": "B−",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 51,
-    "questionNumber": 51,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which is the largest organ of the human body?",
-    "optionA": "Liver",
-    "optionB": "Brain",
-    "optionC": "Skin",
-    "optionD": "Lung",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 52,
-    "questionNumber": 52,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which country uses the currency called the Baht?",
-    "optionA": "Thailand",
-    "optionB": "Vietnam",
-    "optionC": "Cambodia",
-    "optionD": "Laos",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 53,
-    "questionNumber": 53,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "What is the capital of Brazil?",
-    "optionA": "Rio de Janeiro",
-    "optionB": "São Paulo",
-    "optionC": "Brasília",
-    "optionD": "Salvador",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 54,
-    "questionNumber": 54,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which sea separates Europe and Africa?",
-    "optionA": "Red Sea",
-    "optionB": "Mediterranean Sea",
-    "optionC": "Arabian Sea",
-    "optionD": "Baltic Sea",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 55,
-    "questionNumber": 55,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which organization has its headquarters in New York City and works on international cooperation?",
-    "optionA": "NATO",
-    "optionB": "United Nations",
-    "optionC": "FIFA",
-    "optionD": "OPEC",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 56,
-    "questionNumber": 56,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "What is the lower house of India's Parliament?",
-    "optionA": "Rajya Sabha",
-    "optionB": "Lok Sabha",
-    "optionC": "Vidhan Parishad",
-    "optionD": "Gram Sabha",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 57,
-    "questionNumber": 57,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Who is the constitutional head of a state government in India?",
-    "optionA": "Chief Minister",
-    "optionB": "Governor",
-    "optionC": "Chief Secretary",
-    "optionD": "Speaker",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 58,
-    "questionNumber": 58,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "Which branch of government generally makes laws?",
-    "optionA": "Legislature",
-    "optionB": "Judiciary",
-    "optionC": "Executive",
-    "optionD": "Election Commission",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 59,
-    "questionNumber": 59,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "What is the right to vote generally called?",
-    "optionA": "Franchise",
-    "optionB": "Mandate",
-    "optionC": "Census",
-    "optionD": "Referendum",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 60,
-    "questionNumber": 60,
-    "roundId": 3,
-    "roundName": "ROUND 3 — WORLD, SCIENCE, TECHNOLOGY & CIVICS",
-    "points": 1,
-    "questionText": "What does GDP stand for?",
-    "optionA": "Gross Domestic Product",
-    "optionB": "General Development Plan",
-    "optionC": "Global Domestic Production",
-    "optionD": "Gross Development Percentage",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 61,
-    "questionNumber": 61,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Find the next number:\n\n7, 14, 28, 56, ?",
-    "optionA": "84",
-    "optionB": "96",
-    "optionC": "112",
-    "optionD": "120",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 62,
-    "questionNumber": 62,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Find the missing number:\n\n11, 22, 44, 88, ?",
-    "optionA": "132",
-    "optionB": "154",
-    "optionC": "176",
-    "optionD": "188",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 63,
-    "questionNumber": 63,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Which number does not belong?\n\n8, 27, 64, 81, 125",
-    "optionA": "8",
-    "optionB": "27",
-    "optionC": "64",
-    "optionD": "81",
-    "correctAnswer": "D"
-  },
-  {
-    "id": 64,
-    "questionNumber": 64,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A number is multiplied by 4 and then 6 is added. The result is 30. What was the number?",
-    "optionA": "4",
-    "optionB": "5",
-    "optionC": "6",
-    "optionD": "8",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 65,
-    "questionNumber": 65,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Find the next pair:\n\nAB, DE, GH, JK, ?",
-    "optionA": "LM",
-    "optionB": "MN",
-    "optionC": "OP",
-    "optionD": "NO",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 66,
-    "questionNumber": 66,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "If every vowel in the word COMPUTER is replaced by #, what is produced?",
-    "optionA": "C#MP#T#R",
-    "optionB": "C#MPUT#R",
-    "optionC": "C##PUTER",
-    "optionD": "C#M#P#TER",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 67,
-    "questionNumber": 67,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Six students sit in a row. Ravi is to the left of Neha. Neha is to the left of Aman. Who must be ahead of Aman?",
-    "optionA": "Ravi",
-    "optionB": "Neha",
-    "optionC": "Both Ravi and Neha",
-    "optionD": "Cannot determine",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 68,
-    "questionNumber": 68,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A number is 25% of 240. What is the number?",
-    "optionA": "40",
-    "optionB": "50",
-    "optionC": "60",
-    "optionD": "80",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 69,
-    "questionNumber": 69,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "If 4 workers complete a job in 15 days at the same rate, how many days would 5 workers theoretically need?",
-    "optionA": "10",
-    "optionB": "12",
-    "optionC": "15",
-    "optionD": "18",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 70,
-    "questionNumber": 70,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Find the missing number:\n\n5 × 5 = 30\n6 × 6 = 42\n7 × 7 = 56\n8 × 8 = ?",
-    "optionA": "64",
-    "optionB": "72",
-    "optionC": "80",
-    "optionD": "88",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 71,
-    "questionNumber": 71,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A person is facing east. He turns right, then right again. Which direction is he facing?",
-    "optionA": "North",
-    "optionB": "South",
-    "optionC": "East",
-    "optionD": "West",
-    "correctAnswer": "D"
-  },
-  {
-    "id": 72,
-    "questionNumber": 72,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "In a race, Maya finishes before Priya but after Riya. Who finishes first among these three?",
-    "optionA": "Maya",
-    "optionB": "Priya",
-    "optionC": "Riya",
-    "optionD": "Cannot determine",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 73,
-    "questionNumber": 73,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Find the next number:\n\n1, 4, 10, 22, 46, ?",
-    "optionA": "82",
-    "optionB": "90",
-    "optionC": "94",
-    "optionD": "96",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 74,
-    "questionNumber": 74,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A box has 5 red, 5 blue and 5 black pens. What is the minimum number you must pick to guarantee two pens of the same colour?",
-    "optionA": "2",
-    "optionB": "3",
-    "optionC": "4",
-    "optionD": "5",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 75,
-    "questionNumber": 75,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "If MONDAY is coded as 123456, what is the code for DAY?",
-    "optionA": "456",
-    "optionB": "345",
-    "optionC": "126",
-    "optionD": "356",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 76,
-    "questionNumber": 76,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A shopkeeper gives 10% discount on ₹900. What is the selling price?",
-    "optionA": "₹810",
-    "optionB": "₹820",
-    "optionC": "₹850",
-    "optionD": "₹890",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 77,
-    "questionNumber": 77,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "Find the odd one out:",
-    "optionA": "121",
-    "optionB": "144",
-    "optionC": "169",
-    "optionD": "195",
-    "correctAnswer": "D"
-  },
-  {
-    "id": 78,
-    "questionNumber": 78,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A meeting starts at 2:40 PM and lasts 1 hour 35 minutes. When does it end?",
-    "optionA": "3:55 PM",
-    "optionB": "4:05 PM",
-    "optionC": "4:15 PM",
-    "optionD": "4:25 PM",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 79,
-    "questionNumber": 79,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "If P > Q, Q > R, and R > S, which is definitely true?",
-    "optionA": "S > P",
-    "optionB": "P > S",
-    "optionC": "Q > P",
-    "optionD": "S > Q",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 80,
-    "questionNumber": 80,
-    "roundId": 4,
-    "roundName": "ROUND 4 — HARD LOGIC & REASONING",
-    "points": 3,
-    "questionText": "A farmer has chickens and cows. There are 10 animals and 28 legs altogether. How many cows are there?",
-    "optionA": "3",
-    "optionB": "4",
-    "optionC": "5",
-    "optionD": "6",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 81,
-    "questionNumber": 81,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "What is the output?\n\nx = 8\nx += 3\nx //= 2",
-    "optionA": "5",
-    "optionB": "5.5",
-    "optionC": "11",
-    "optionD": "22",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 82,
-    "questionNumber": 82,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "How many times does the following loop print?\n\nfor i in range(2, 8):\n    print(i)",
-    "optionA": "5",
-    "optionB": "6",
-    "optionC": "7",
-    "optionD": "8",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 83,
-    "questionNumber": 83,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "What is the output?\n\na = 7\nb = 3\nprint(a % b)",
-    "optionA": "1",
-    "optionB": "2",
-    "optionC": "3",
-    "optionD": "4",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 84,
-    "questionNumber": 84,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A binary number 1010 represents which decimal number?",
-    "optionA": "8",
-    "optionB": "9",
-    "optionC": "10",
-    "optionD": "12",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 85,
-    "questionNumber": 85,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "What is the next value?\n\n1, 2, 4, 8, 16, 32, ?",
-    "optionA": "48",
-    "optionB": "56",
-    "optionC": "64",
-    "optionD": "72",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 86,
-    "questionNumber": 86,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "An array contains 12 elements. If indexing starts from 0, what is the index of the final element?",
-    "optionA": "10",
-    "optionB": "11",
-    "optionC": "12",
-    "optionD": "13",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 87,
-    "questionNumber": 87,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A program takes 2 seconds to process 100 records. At the same rate, how long for 500 records?",
-    "optionA": "5 seconds",
-    "optionB": "8 seconds",
-    "optionC": "10 seconds",
-    "optionD": "12 seconds",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 88,
-    "questionNumber": 88,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "Which operation has the highest priority in this expression?\n\n10 + 4 * 2",
-    "optionA": "Addition",
-    "optionB": "Multiplication",
-    "optionC": "Assignment",
-    "optionD": "Comparison",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 89,
-    "questionNumber": 89,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A web server receives 300 requests in 5 seconds. What is the average rate?",
-    "optionA": "30 requests/sec",
-    "optionB": "50 requests/sec",
-    "optionC": "60 requests/sec",
-    "optionD": "75 requests/sec",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 90,
-    "questionNumber": 90,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A table has 200 rows. A query selects only rows where age > 18, leaving 150 rows. How many rows were excluded?",
-    "optionA": "25",
-    "optionB": "40",
-    "optionC": "50",
-    "optionD": "75",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 91,
-    "questionNumber": 91,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "Which data structure is most suitable for checking whether an item exists quickly using a key?",
-    "optionA": "Hash table",
-    "optionB": "Stack",
-    "optionC": "Queue",
-    "optionD": "Linked list only",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 92,
-    "questionNumber": 92,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A process needs 500 MB of memory. The system has only 300 MB available. What is most likely to happen?",
-    "optionA": "It may fail or use virtual memory depending on the system",
-    "optionB": "The CPU doubles its speed",
-    "optionC": "The keyboard stops working",
-    "optionD": "The monitor becomes brighter",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 93,
-    "questionNumber": 93,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "If an algorithm doubles the input size and the number of operations also doubles, which complexity is most consistent?",
-    "optionA": "O(1)",
-    "optionB": "O(log n)",
-    "optionC": "O(n)",
-    "optionD": "O(n²)",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 94,
-    "questionNumber": 94,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A website loads quickly for 9 users but becomes very slow when 10,000 users access it simultaneously. What is the most likely issue?",
-    "optionA": "Scalability",
-    "optionB": "Keyboard failure",
-    "optionC": "Screen resolution",
-    "optionD": "File extension",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 95,
-    "questionNumber": 95,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A programmer wants to prevent users from entering negative ages into a form. What should be added?",
-    "optionA": "Input validation",
-    "optionB": "Image compression",
-    "optionC": "DNS",
-    "optionD": "Encryption only",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 96,
-    "questionNumber": 96,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A system accepts admin' OR '1'='1 as part of a database login query. What kind of security problem might this indicate?",
-    "optionA": "SQL injection",
-    "optionB": "DDoS",
-    "optionC": "Bluetooth attack",
-    "optionD": "File compression",
-    "correctAnswer": "A"
-  },
-  {
-    "id": 97,
-    "questionNumber": 97,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A program has a loop inside another loop. If the outer loop runs 5 times and the inner loop runs 4 times for each outer iteration, how many total inner executions occur?",
-    "optionA": "9",
-    "optionB": "16",
-    "optionC": "20",
-    "optionD": "25",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 98,
-    "questionNumber": 98,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A server has 4 GB RAM. Three applications use 900 MB, 700 MB and 600 MB. Approximately how much RAM remains?",
-    "optionA": "1.0 GB",
-    "optionB": "1.5 GB",
-    "optionC": "1.8 GB",
-    "optionD": "2.2 GB",
-    "correctAnswer": "C"
-  },
-  {
-    "id": 99,
-    "questionNumber": 99,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "A search algorithm eliminates half of the remaining possibilities at every step. Which algorithmic idea does this describe?",
-    "optionA": "Linear search",
-    "optionB": "Binary search",
-    "optionC": "Bubble sort",
-    "optionD": "Hash collision",
-    "correctAnswer": "B"
-  },
-  {
-    "id": 100,
-    "questionNumber": 100,
-    "roundId": 5,
-    "roundName": "ROUND 5 — HARD IT + LOGIC",
-    "points": 3,
-    "questionText": "Your hackathon application suddenly gets 10× more traffic. Which change is most directly aimed at handling the increased load?",
-    "optionA": "Increase scalability/resources",
-    "optionB": "Change the logo",
-    "optionC": "Rename variables",
-    "optionD": "Change the font",
-    "correctAnswer": "A"
-  },
-];
-
-
-// ── Pure Logic Helpers ────────────────────────────────────────────────────────
+export const ROUNDS: RoundItem[] = STARFORGE_ROUNDS;
+export const QUESTIONS: QuestionItem[] = STARFORGE_QUESTIONS;
 
 function isValidClub(club: string): boolean {
   return club === "STACK_PUSH" || club === "IT_INNOVATORS";
@@ -1363,12 +55,14 @@ function evaluateSubmission(answer: string, correctAnswer: string, points: numbe
 
 // ── Redis Native REST Client ───────────────────────────────────────────────
 
-const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || "https://valued-bluebird-145233.upstash.io")
+const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || "")
   .replace(/^["']|["']$/g, "")
   .trim();
-const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAjdRAAIgcDIwYTE1NmM1Y2I2NzM0MDQ3YjFiZGQ0ZmM3NWZiMWQ0YQ")
+const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "")
   .replace(/^["']|["']$/g, "")
   .trim();
+const USE_FIREBASE_STORE = process.env.QUIZ_STORE === "firebase";
+const firebaseStore = USE_FIREBASE_STORE ? createFirebaseRedisStore() : null;
 
 // ── Local in-memory store (zero-cost event mode) ─────────────────────────────
 // Enabled explicitly via QUIZ_STORE=memory, or automatically when no Upstash
@@ -1379,7 +73,7 @@ const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "gQAAAAAAAjdRAAIgcD
 // ngrok) so remote students can join without any paid database.
 const USE_MEMORY_STORE =
   process.env.QUIZ_STORE === "memory" ||
-  (process.env.VERCEL !== "1" && !process.env.UPSTASH_REDIS_REST_URL && !process.env.UPSTASH_REDIS_REST_TOKEN);
+  (!USE_FIREBASE_STORE && process.env.VERCEL !== "1" && !process.env.UPSTASH_REDIS_REST_URL && !process.env.UPSTASH_REDIS_REST_TOKEN);
 const memoryStore = USE_MEMORY_STORE ? createMemoryStore() : null;
 
 // Sentinel returned by redisCommand when the Redis store is unreachable.
@@ -1401,8 +95,17 @@ function isUpstashQuotaErrorBody(text: string): boolean {
 
 async function redisCommand(cmd: (string | number)[]) {
   countRedisCommand(cmd);
-  // In-memory mode: dispatch to the local store — never touches Upstash.
+  // Firebase is the shared persistent store when selected for deployment.
+  if (firebaseStore) {
+    try {
+      return await firebaseStore.command(cmd);
+    } catch (err) {
+      console.error("Firebase state-store error:", err);
+      return REDIS_UNAVAILABLE;
+    }
+  }
   if (memoryStore) return memoryStore.command(cmd);
+  if (!REDIS_URL || !REDIS_TOKEN) return REDIS_UNAVAILABLE;
   try {
     const res = await fetch(REDIS_URL, {
       method: "POST",
@@ -1447,8 +150,17 @@ async function redisCommand(cmd: (string | number)[]) {
 async function redisPipeline(cmds: (string | number)[][]) {
   if (cmds.length === 0) return [];
   for (const c of cmds) countRedisCommand(c);
-  // In-memory mode: apply the batch against the local store.
+  // Firebase is the shared persistent state store when selected for deployment.
+  if (firebaseStore) {
+    try {
+      return await firebaseStore.pipeline(cmds);
+    } catch (err) {
+      console.error("Firebase state-store pipeline error:", err);
+      return REDIS_UNAVAILABLE;
+    }
+  }
   if (memoryStore) return memoryStore.pipeline(cmds);
+  if (!REDIS_URL || !REDIS_TOKEN) return REDIS_UNAVAILABLE;
   try {
     const res = await fetch(`${REDIS_URL}/pipeline`, {
       method: "POST",
@@ -1593,10 +305,7 @@ function rankedStatusInvalid(status: unknown): boolean {
  * Per-question answer window (server-authoritative), scaled by difficulty and
  * quiz mode:
  *
- * LIVE quiz (100 questions):
- *   Q1–40    → 15s (easy warm-up rounds)
- *   Q41–80   → 30s (core rounds)
- *   Q81–100  → 45s (hackathon challenge finale)
+ * LIVE STARFORGE quiz (50 scenario questions): 35 seconds per question.
  *
  * TEST quiz (50 questions, 3 rounds):
  *   Q1–20    → 15s (ROUND 1 — Easy IT & Technology, 1 pt)
@@ -1612,10 +321,8 @@ function questionDurationSeconds(questionNumber: number | null | undefined, mode
     if (n >= 21 && n <= 50) return 45;
     return 30;
   }
-  if (n >= 1 && n <= 40) return 15;
-  if (n >= 81) return 45;
-  if (n >= 41 && n <= 80) return 30;
-  return 30;
+  if (n >= 1 && n <= 50) return 35;
+  return 35;
 }
 
 const QUESTION_SECONDS = questionDurationSeconds(1, "live");
@@ -2176,7 +883,7 @@ end
 if not inserted then table.insert(list, entry) end
 for i, e in ipairs(list) do
   e.rank = i
-  e.speedBonus = i == 1 and 3 or (i == 2 and 2 or (i == 3 and 1 or 0))
+  e.speedBonus = ARGV[3] == 'bonus' and (i == 1 and 3 or (i == 2 and 2 or (i == 3 and 1 or 0))) or 0
 end
 redis.call('SET', KEYS[2], cjson.encode(list), 'EX', 86400)
 local fastest = list[1]
@@ -2358,12 +1065,21 @@ app.use((req, _res, next) => {
   express.json()(req, _res, next);
 });
 
-const ADMIN_PW = process.env.ADMIN_PASSWORD || "MadeBySagar";
-const ADMIN_HASH = bcrypt.hashSync(ADMIN_PW, 10);
-
+// ADMIN_PASSWORD is read per request so a Firebase Function Secret can be
+// injected at runtime. No default password is accepted on any environment.
+let cachedAdminPassword = "";
+let cachedAdminHash = "";
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const pw = req.headers["x-admin-password"] as string;
-  if (pw !== ADMIN_PW && !bcrypt.compareSync(pw || "", ADMIN_HASH)) {
+  const expectedPassword = process.env.ADMIN_PASSWORD || "";
+  if (!expectedPassword) {
+    return res.status(503).json({ error: "Admin password is not configured on the server." });
+  }
+  if (cachedAdminPassword !== expectedPassword) {
+    cachedAdminPassword = expectedPassword;
+    cachedAdminHash = bcrypt.hashSync(expectedPassword, 10);
+  }
+  const suppliedPassword = req.headers["x-admin-password"] as string;
+  if (suppliedPassword !== expectedPassword && !bcrypt.compareSync(suppliedPassword || "", cachedAdminHash)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   next();
@@ -3345,6 +2061,8 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
                 answer: a,
               })
             : "",
+          // STARFORGE's source PDF specifies one mark per correct answer with no speed bonus.
+          mode === "test" ? "bonus" : "none",
         ],
       ]);
       if (evalOut === REDIS_UNAVAILABLE) throw new RedisUnavailableError();
@@ -3357,7 +2075,7 @@ function registerModeRoutes(router: express.Router, prefix: string, mode: QuizMo
           const ranked = JSON.parse(status2);
           if (ranked?.status === "OK") {
             speedRank = Number(ranked.rank) || 0;
-            speedBonus = Number(ranked.speedBonus) || 0;
+            speedBonus = mode === "test" ? (Number(ranked.speedBonus) || 0) : 0;
           }
         } catch (_) {}
       }
@@ -3469,7 +2187,7 @@ app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("API Error:", err);
   // Fail closed when the authoritative state store is unreachable: never
-  // fabricate a WAITING (or any other) quiz state from a Redis outage.
+  // fabricate a WAITING (or any other) quiz state from a backend outage.
   if (err?.name === "RedisUnavailableError") {
     return res.status(503).json({
       error: "Quiz state temporarily unavailable — state store unreachable",

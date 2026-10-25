@@ -1,0 +1,17 @@
+{
+  "name": "quizbattle-functions",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "firebase-admin": "^13.5.0",
+    "firebase-functions": "^6.4.0",
+    "socket.io": "^4.8.3"
+  }
+}

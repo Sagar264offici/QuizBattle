@@ -11,7 +11,8 @@
     "build": "vite build && tsc -p server/tsconfig.json",
     "server:build": "tsc -p server/tsconfig.json",
     "seed": "tsx server/src/scripts/seedQuiz.ts",
-    "start": "node server/dist/server/src/index.js"
+    "start": "node server/dist/server/src/index.js",
+    "deploy:firebase": "firebase deploy --only hosting,functions"
   },
   "keywords": [],
   "author": "",
@@ -33,7 +34,8 @@
     "react-router-dom": "^7.18.2",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "firebase-admin": "^13.5.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",
@@ -55,5 +57,8 @@
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": "22"
   }
 }

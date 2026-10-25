@@ -1,0 +1,41 @@
+{
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs22",
+    "ignore": [
+      "node_modules/**",
+      ".git/**",
+      "firebase-debug.log",
+      "firebase-debug.*.log"
+    ],
+    "predeploy": [
+      "npm --prefix \"$PROJECT_DIR\" run build",
+      "rm -rf \"$RESOURCE_DIR/server-dist\" && cp -R \"$PROJECT_DIR/server/dist\" \"$RESOURCE_DIR/server-dist\""
+    ],
+    "codebase": "quizbattle"
+  },
+  "hosting": {
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": {
+          "functionId": "quizApi",
+          "region": "asia-southeast1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "predeploy": [
+      "npm --prefix \"$PROJECT_DIR\" run build"
+    ]
+  }
+}

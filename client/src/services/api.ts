@@ -13,8 +13,8 @@ export function clearAdminPassword() {
 
 /**
  * QuizBattle runs in two isolated modes:
- *  - "live": the real 100-question college quiz (default, unchanged behavior)
- *  - "test": the 50-question battle mode (3 rounds) — fully isolated from the live quiz
+ *  - "live": the 50-question STARFORGE team-selection quiz from the supplied PDF
+ *  - "test": the existing 50-question practice mode — isolated from the live quiz
  * Test-mode requests are scoped under /api/test/... so the two never share state.
  */
 export type QuizMode = "live" | "test";

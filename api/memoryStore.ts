@@ -59,7 +59,7 @@ export function createMemoryStore(): MemoryStore {
     const keys = cmd.slice(3, 3 + numKeys).map(String);
     const args = cmd.slice(3 + numKeys).map(String);
     const [subKey, rankKey, fastestKey, fastestLatestKey] = keys;
-    const [subJson, detailJson] = args;
+    const [subJson, detailJson, bonusMode] = args;
 
     // SET KEYS[1] ARGV[1] EX 86400 NX — reject duplicates, never touch the
     // ranking/fastest records on a duplicate.
@@ -96,7 +96,7 @@ export function createMemoryStore(): MemoryStore {
     list.sort(cmp);
     list.forEach((e, i) => {
       e.rank = i + 1;
-      e.speedBonus = i === 0 ? 3 : i === 1 ? 2 : i === 2 ? 1 : 0;
+      e.speedBonus = bonusMode === "bonus" ? (i === 0 ? 3 : i === 1 ? 2 : i === 2 ? 1 : 0) : 0;
     });
     setEntry(rankKey, { kind: "string", value: JSON.stringify(list), expiresAt: null }, 86400);
     const fastest = list[0];
