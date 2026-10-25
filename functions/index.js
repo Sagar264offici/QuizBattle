@@ -8,7 +8,7 @@ const adminPassword = defineSecret("ADMIN_PASSWORD");
 // polling fallback there. Shared quiz state is persisted in Firebase Realtime Database.
 process.env.QUIZ_STORE = "firebase";
 
-const { app } = await import("../server/dist/api/index.js");
+const { app } = await import("./server-dist/api/index.js");
 
 export const quizApi = onRequest(
   {
