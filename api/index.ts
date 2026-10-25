@@ -1,6 +1,7 @@
 /**
- * QuizBattle API — Upstash Redis-backed Vercel Serverless Handler
- * Uses @upstash/redis SDK for shared state across all serverless lambdas.
+ * QuizBattle API — shared quiz state with local-memory, Firebase RTDB, or
+ * explicitly configured Upstash REST storage. Firebase Functions use REST
+ * polling; the persistent Node server can attach Socket.IO for local/Cloud Run.
  */
 
 import fs from "node:fs";
