@@ -1055,12 +1055,24 @@ app.use((req, _res, next) => {
   express.json()(req, _res, next);
 });
 
-const ADMIN_PW = process.env.ADMIN_PASSWORD || "MadeBySagar";
-const ADMIN_HASH = bcrypt.hashSync(ADMIN_PW, 10);
-
+// A local-only default preserves the development workflow. Deployed environments
+// must explicitly configure ADMIN_PASSWORD; the value is read per request so a
+// Firebase Function Secret can be injected safely at runtime.
+let cachedAdminPassword = "";
+let cachedAdminHash = "";
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const pw = req.headers["x-admin-password"] as string;
-  if (pw !== ADMIN_PW && !bcrypt.compareSync(pw || "", ADMIN_HASH)) {
+  const expectedPassword =
+    process.env.ADMIN_PASSWORD ||
+    (process.env.NODE_ENV === "development" ? "MadeBySagar" : "");
+  if (!expectedPassword) {
+    return res.status(503).json({ error: "Admin password is not configured on the server." });
+  }
+  if (cachedAdminPassword !== expectedPassword) {
+    cachedAdminPassword = expectedPassword;
+    cachedAdminHash = bcrypt.hashSync(expectedPassword, 10);
+  }
+  const suppliedPassword = req.headers["x-admin-password"] as string;
+  if (suppliedPassword !== expectedPassword && !bcrypt.compareSync(suppliedPassword || "", cachedAdminHash)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   next();
