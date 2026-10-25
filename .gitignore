@@ -9,3 +9,4 @@ coverage
 *.db
 *.db-journal
 .freebuff
+functions/server-dist/
