@@ -1,106 +1,88 @@
-# QuizBattle
+# QuizBattle — STARFORGE Team Selection
 
-A real-time IT club quiz platform for a live college event.
+QuizBattle is a live team-selection quiz application. The active **Live Quiz** is populated from the supplied *STARFORGE TEAM SELECTION QUIZ* PDF.
 
-## Features
+## Quiz rules and content
 
-- On-the-spot participant registration with club selection
-- Real-time quiz state and broadcasting via Socket.IO
-- Admin dashboard for question control and score reveal
-- Projector display for live audience view
-- Club, individual, and fastest-correct leaderboards
-- SQLite + Prisma data model for persistence
-- Secure admin login using the configured admin password
-- Seed script to import the PDF-based question set
+- 50 situational-judgment questions across six sections.
+- One point for each correct response; no negative marking.
+- The active quiz does not award speed bonuses, so the maximum score is 50.
+- The answer key stays in the server-side question data and is not sent to participants before reveal.
+- The existing `/test` mode remains isolated from the active Live Quiz.
 
-## Requirements
+The source of truth is `server/src/data/questionsData.ts`. Update that file and redeploy to change the live question bank.
 
-- Node.js 20+
-- npm
-- A modern browser on the host laptop or event network
+## Local setup
 
-## Setup
+Requirements: Node.js 22, npm, and Git.
 
-1. Install dependencies:
+```bash
+git clone https://github.com/Sagar264offici/QuizBattle.git
+cd QuizBattle
+npm install
+cp .env.example .env
+```
+
+Edit `.env` and replace `ADMIN_PASSWORD` and `SESSION_SECRET` with unique values. Local development defaults to the in-memory state store; this does not write to Firebase or Upstash.
+
+Start the frontend and backend:
+
+```bash
+npm run dev
+```
+
+Local URLs:
+
+- Participant: http://localhost:5173/join
+- Admin: http://localhost:5173/admin/login
+- Projector: http://localhost:5173/display
+- API health: http://localhost:3000/api/health
+
+Keep the Terminal process running. In local memory mode, participants and quiz state are temporary and will be lost when the backend restarts.
+
+## Firebase Hosting + Realtime Database deployment
+
+This branch adds Firebase Hosting and Cloud Functions configuration. The server uses Firebase Realtime Database as a shared state store under the isolated `quizbattleRedis` namespace. There is no need to manually enter the 50 questions in the Firebase console: they are deployed with the server code.
+
+1. Create or select a Firebase project in the [Firebase Console](https://console.firebase.google.com/).
+2. Create a **Realtime Database** in the same general region as the function (the function is configured for `asia-south1`, Mumbai). Confirm the project's runtime config includes the database URL.
+3. Enable billing for Cloud Functions if Firebase requires it for your project. Review the applicable Firebase and Google Cloud quotas/pricing before a live event.
+4. Install the Firebase CLI and sign in:
+
+   ```bash
+   npm install -g firebase-tools
+   firebase login
+   firebase use --add
+   ```
+
+5. Set a strong admin password in Secret Manager:
+
+   ```bash
+   firebase functions:secrets:set ADMIN_PASSWORD
+   ```
+
+   Enter the password at the prompt; do not commit it to GitHub or paste it into chat.
+
+6. Install dependencies and deploy Hosting + Functions:
+
+   ```bash
    npm install
-2. Copy environment file:
-   cp .env.example .env
-3. Generate Prisma client and initialize database:
-   npx prisma generate
-   npx prisma db push
-4. Seed the quiz data from the PDF-derived source:
-   npm run seed
-5. Start development servers:
-   npm run dev
+   npm run deploy:firebase
+   ```
 
-## Environment variables
+The build hook compiles the frontend and TypeScript API before deployment. Firebase Hosting serves the frontend and rewrites `/api/**` to the `quizApi` function. Verify the live API at `https://YOUR_PROJECT_ID.web.app/api/health`.
 
-- PORT: server port, default 3000
-- DATABASE_URL: SQLite database path
-- ADMIN_PASSWORD: admin login password
-- SESSION_SECRET: session secret for secure cookies
-- CLIENT_URL: frontend origin for CORS
-- NODE_ENV: development/production
+### Realtime behavior
 
-### Vercel deployment (required)
+The API state is persisted in Firebase Realtime Database and shared across requests. Firebase Cloud Functions are request-based, so this deployment uses the client's REST polling fallback rather than a persistent Socket.IO server. For a single-campus quiz, this provides live shared state with polling delay. If persistent Socket.IO push across connections is essential, run the Node server on Cloud Run and keep Firebase Realtime Database as its state store.
 
-Vercel functions do not share in-memory state. Create an Upstash Redis database
-and add these two variables in the Vercel project settings before deploying:
+### Security
 
-- `UPSTASH_REDIS_REST_URL`
-- `UPSTASH_REDIS_REST_TOKEN`
+- Never commit `.env`, service-account JSON files, Upstash tokens, or production admin passwords.
+- Production admin authentication fails closed when `ADMIN_PASSWORD` is not configured.
+- The local development-only password fallback must never be relied on in production.
+- Firebase Admin access is server-side; do not make the `quizbattleRedis` data path publicly writable through client database rules.
 
-The API deliberately returns a clear `503` if either is missing in Vercel,
-rather than serving different quiz states to different students. Set
-`ADMIN_PASSWORD` there as well. Locally, the API uses temporary in-memory state
-for development, so Redis is optional.
+## Legacy Upstash option
 
-## Admin login
-
-- URL: http://localhost:5173/admin/login
-- Password: MadeBySagar
-
-## Participant URL
-
-- http://localhost:5173/join
-
-## Projector URL
-
-- http://localhost:5173/display
-
-## LAN setup
-
-Bind the host to 0.0.0.0 by starting the app on the laptop connected to the event network. Then participants can use the host's LAN IP, for example:
-
-- http://192.168.1.100:3000/join
-- http://192.168.1.100:3000/admin/login
-- http://192.168.1.100:3000/display
-
-## Event workflow
-
-1. Start the app.
-2. Open the admin login page and sign in.
-3. Prepare the question set and start the first question.
-4. Participants register on the join page and choose their club.
-5. Ask participants to submit answers during the live question.
-6. Lock the question, reveal the correct answer, and compute scores.
-7. Advance to the next question until the event ends.
-8. Use reset controls carefully when needed.
-
-## Reset process
-
-- Reset current question: clears current question submissions only
-- Reset entire quiz: clears participant scores, club points, and live state but keeps question database intact
-- End quiz: marks the event as finished
-
-## Troubleshooting
-
-- If the database is stale, run: npx prisma db push
-- If the seed is not loaded, run: npm run seed
-- On Vercel, verify both Upstash Redis variables are present if the API reports a storage configuration error.
-- If admin auth fails, verify the ADMIN_PASSWORD value in Vercel (or `.env` locally).
-
-## Notes
-
-This project follows the authoritative PDF question set and is meant for live event use on a college network.
-# QuizBattle
+The adapter can still use Upstash when `QUIZ_STORE` is not set to `firebase` or `memory` and both `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are configured. Keep those values in deployment environment variables only. Hard-coded Upstash credentials have been removed from this branch.
